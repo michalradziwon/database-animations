@@ -127,7 +127,7 @@
         this._config = {
           tableSize: 100_000_000,
           streamCount: 4,
-          partitionsEnabled: true,   // toggle: true = 4 partitions, false = none
+          partitionsEnabled: false,  // toggle: true = 4 partitions, false = none
           partitionCount: 4,         // fixed at 4 when enabled
           theme: 'professional',
           animationSpeed: 1,
@@ -176,7 +176,7 @@
         const weights = [];
         for (let i = 0; i < partitionCount; i++) {
           const t = partitionCount > 1 ? (i / (partitionCount - 1)) * 2 - 1 : 0; // -1 to 1
-          weights.push(1 + t * 0.75 * s);
+          weights.push(1 + t * 0.9 * s);
         }
         const totalWeight = weights.reduce((a, b) => a + b, 0);
 
@@ -903,7 +903,7 @@
         const pad = 4;
 
         this.sourceCellGrids = [];
-        const fractions = this._getPartitionHeights();
+        const fractions = partCount === 1 ? [1] : this._getPartitionHeights();
         const totalH = db.height - innerPad * 2 - partGap * (partCount - 1);
 
         let cursor = db.y + innerPad;
