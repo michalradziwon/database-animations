@@ -4,9 +4,9 @@ Interactive visualizations demonstrating database concepts through animated SVGs
 
 ## Visualizations
 
-**Parallel Sync** — Animated data sync from source to target database through parallel stream nodes. Shows partitioning, throughput bottlenecks, record flow, and real-time metrics.
+**[Parallel Sync](https://michalradziwon.github.io/database-animations/parallel-sync-visualization.html)** — Animated data sync from source to target database through parallel stream nodes. Shows partitioning, throughput bottlenecks, record flow, and real-time metrics.
 
-**Partition Pruning** — Demonstrates how partition pruning skips irrelevant data partitions during query execution.
+**[Partition Pruning](https://michalradziwon.github.io/database-animations/partition-pruning-visualization.html)** — Demonstrates how partition pruning skips irrelevant data partitions during query execution.
 
 ## Usage
 
