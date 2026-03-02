@@ -1,0 +1,1578 @@
+<!--
+  Partition Pruning Visualization
+  Copyright (c) 2026 Mike
+  Licensed under the MIT License. See LICENSE file for details.
+
+  Third-party libraries:
+  - D3.js v7.9.0 (https://d3js.org) - BSD 3-Clause License, Copyright 2010-2023 Mike Bostock
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Partition Pruning Visualization</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg-primary: #ffffff;
+      --bg-secondary: #f8fafc;
+      --bg-panel: #f1f5f9;
+      --text-primary: #1e293b;
+      --text-secondary: #64748b;
+      --accent-primary: #2563eb;
+      --accent-secondary: #3b82f6;
+      --accent-success: #22c55e;
+      --accent-warning: #f59e0b;
+      --accent-danger: #ef4444;
+      --border: #e2e8f0;
+      --glow-scan: rgba(234, 179, 8, 0.6);
+      --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      --font-mono: 'Cascadia Code', 'Fira Code', monospace;
+    }
+
+    body { font-family: var(--font); background: var(--bg-primary); color: var(--text-primary); height: 100vh; display: flex; flex-direction: column; transition: background-color 0.3s, color 0.3s; }
+    #config-panel { background: var(--bg-panel); border-bottom: 1px solid var(--border); padding: 12px 20px; flex-shrink: 0; }
+    #visualization { flex: 1; min-height: 0; position: relative; }
+    #main-svg { width: 100%; height: 100%; }
+    #utilization-chart { background: var(--bg-panel); border-top: 1px solid var(--border); height: 150px; flex-shrink: 0; position: relative; }
+    #utilization-chart svg { width: 100%; height: 100%; }
+    #utilization-chart .chart-line { fill: none; stroke-width: 1.5; }
+    #utilization-chart .chart-line-util { stroke: var(--accent-danger); }
+    #utilization-chart .chart-line-throughput { stroke: var(--accent-primary); }
+    #utilization-chart .grid line { stroke: var(--border); stroke-opacity: 0.5; }
+    #utilization-chart .grid .domain { stroke: none; }
+    #utilization-chart .axis { color: var(--text-secondary); font-size: 10px; }
+    #utilization-chart .chart-label { fill: var(--text-secondary); font-size: 11px; font-weight: 600; }
+    #metrics-dashboard { background: var(--bg-panel); border-top: 1px solid var(--border); padding: 8px 20px; flex-shrink: 0; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .config-row { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; flex-wrap: wrap; }
+    .config-row:last-child { margin-bottom: 0; }
+    .config-group { display: flex; align-items: center; gap: 6px; }
+    .config-label { font-size: 13px; font-weight: 500; color: var(--text-secondary); white-space: nowrap; }
+    .config-separator { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+    .config-slider { width: 120px; accent-color: var(--accent-primary); }
+    .config-select { padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; background: var(--bg-primary); color: var(--text-primary); }
+    .playback-btn { padding: 6px 12px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 4px; font-size: 14px; cursor: pointer; transition: all 0.15s; }
+    .playback-btn:hover { background: var(--accent-secondary); color: white; }
+    .playback-btn.playing { background: var(--accent-primary); color: white; }
+    .slider-value { font-size: 12px; font-weight: 600; color: var(--accent-primary); min-width: 28px; text-align: center; }
+    .toggle-btn { padding: 6px 16px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+    .toggle-btn:first-child { border-radius: 4px 0 0 4px; }
+    .toggle-btn:last-child { border-radius: 0 4px 4px 0; }
+    .toggle-btn.active { background: var(--accent-primary); color: white; border-color: var(--accent-primary); }
+    .alignment-badge { padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+    .alignment-badge.aligned { background: #dcfce7; color: #166534; }
+    .alignment-badge.misaligned { background: #fef3c7; color: #92400e; }
+    .db-block { stroke-width: 2; rx: 8; ry: 8; }
+    .db-label { font-size: 16px; font-weight: 700; text-anchor: middle; }
+    .db-sublabel { font-size: 11px; text-anchor: middle; fill: var(--text-secondary); }
+    .partition-rect { stroke-width: 1; }
+    .partition-label { font-size: 10px; text-anchor: middle; fill: var(--text-secondary); }
+    .particle { pointer-events: none; }
+    .metric-card { display: flex; flex-direction: column; align-items: center; padding: 4px 10px; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border); min-width: 100px; }
+    .metric-value { font-size: 16px; font-weight: 700; color: var(--accent-primary); font-family: var(--font-mono); }
+    .metric-label { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+    .gauge-bar-bg { fill: var(--bg-secondary); stroke: var(--border); stroke-width: 1; rx: 2; }
+    .gauge-bar-fill { rx: 2; transition: height 0.1s; }
+    .gauge-label { font-size: 9px; text-anchor: middle; fill: var(--text-secondary); }
+    .gauge-value { font-size: 8px; text-anchor: middle; font-weight: 600; }
+    .app-node-rect { stroke-width: 2; rx: 6; ry: 6; }
+    .app-node-label { font-size: 13px; font-weight: 600; text-anchor: middle; }
+    .scan-highlight { transition: opacity 0.2s; }
+    .legend-item { font-size: 11px; }
+
+    @keyframes scan-pulse {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 0.8; }
+    }
+    .scan-glow {
+      animation: scan-pulse 1s ease-in-out infinite;
+    }
+  </style>
+</head>
+<body>
+  <div id="config-panel"></div>
+  <div id="visualization">
+    <svg id="main-svg"></svg>
+  </div>
+  <div id="utilization-chart"><svg id="chart-svg"></svg></div>
+  <div id="metrics-dashboard"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script>
+    // ── Shared utility ──────────────────────────────────────────────────
+    function formatNum(n) {
+      if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1) + 'B';
+      if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+      if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+      return Math.round(n).toString();
+    }
+
+    // ── EventBus ──────────────────────────────────────────────────────────
+    class EventBus {
+      constructor() { this._listeners = {}; }
+      on(event, callback) { (this._listeners[event] ||= []).push(callback); }
+      off(event, callback) {
+        if (!this._listeners[event]) return;
+        this._listeners[event] = this._listeners[event].filter(cb => cb !== callback);
+      }
+      emit(event, data) { (this._listeners[event] || []).forEach(cb => cb(data)); }
+    }
+
+    // ── ConfigurationManager ─────────────────────────────────────────────
+    class ConfigurationManager {
+      constructor(bus) {
+        this.bus = bus;
+        this._config = {
+          tableSize: 100_000_000,
+          streamCount: 4,
+          partitionsEnabled: true,   // toggle: true = 4 partitions, false = none
+          partitionCount: 4,         // fixed at 4 when enabled
+          theme: 'professional',
+          animationSpeed: 1,
+          baseScanRate: 10_000,      // records/s base scan rate per stream
+          partitionSkew: 0,          // 0 = equal partitions, 1 = max imbalance
+        };
+      }
+
+      get(key) { return this._config[key]; }
+
+      set(key, value) {
+        if (this._config[key] === value) return;
+        this._config[key] = value;
+        if (key === 'partitionsEnabled') {
+          this._config.partitionCount = value ? 4 : 1;
+        }
+        this.bus.emit('config-changed', { key, value, config: { ...this._config } });
+      }
+
+      getAll() { return { ...this._config }; }
+
+      getStreamRanges() {
+        const { tableSize, streamCount } = this._config;
+        // When aligned with partitions, match partition boundaries
+        if (this._config.partitionsEnabled && streamCount === this._config.partitionCount) {
+          return this.getPartitionRanges().map(p => ({
+            start: p.start,
+            end: p.end,
+            size: p.end - p.start,
+          }));
+        }
+        // Otherwise divide table equally
+        const streamSize = Math.ceil(tableSize / streamCount);
+        return Array.from({ length: streamCount }, (_, i) => ({
+          start: i * streamSize,
+          end: Math.min((i + 1) * streamSize, tableSize),
+          size: i === streamCount - 1 ? tableSize - i * streamSize : streamSize,
+        }));
+      }
+
+      getPartitionRanges() {
+        const { tableSize, partitionCount, partitionSkew } = this._config;
+        const s = partitionSkew || 0;
+
+        // Weights: linearly skewed from (1 - 0.75*s) to (1 + 0.75*s)
+        const weights = [];
+        for (let i = 0; i < partitionCount; i++) {
+          const t = partitionCount > 1 ? (i / (partitionCount - 1)) * 2 - 1 : 0; // -1 to 1
+          weights.push(1 + t * 0.75 * s);
+        }
+        const totalWeight = weights.reduce((a, b) => a + b, 0);
+
+        const ranges = [];
+        let cursor = 0;
+        for (let i = 0; i < partitionCount; i++) {
+          const size = Math.round(tableSize * weights[i] / totalWeight);
+          const end = i === partitionCount - 1 ? tableSize : cursor + size;
+          ranges.push({ start: cursor, end, label: `P${i + 1}` });
+          cursor = end;
+        }
+        return ranges;
+      }
+
+      // Returns which partitions a given stream must scan
+      getPartitionsForStream(streamIndex) {
+        const cfg = this._config;
+        if (!cfg.partitionsEnabled) {
+          // No partitions -- full table scan, return single partition [0]
+          return [0];
+        }
+        const streamRanges = this.getStreamRanges();
+        const partRanges = this.getPartitionRanges();
+        const stream = streamRanges[streamIndex];
+        const scanned = [];
+        partRanges.forEach((part, pi) => {
+          // Overlap check: stream range intersects partition range
+          if (stream.start < part.end && stream.end > part.start) {
+            scanned.push(pi);
+          }
+        });
+        return scanned;
+      }
+
+      isAligned() {
+        if (!this._config.partitionsEnabled) return false;
+        return this._config.streamCount === this._config.partitionCount;
+      }
+
+      // How much of the table each stream must scan (in records)
+      getStreamScanSize(streamIndex) {
+        const cfg = this._config;
+        if (!cfg.partitionsEnabled) {
+          // Full table scan per stream (no pruning)
+          return cfg.tableSize;
+        }
+        // With partitions: only scan the partitions that overlap
+        const partRanges = this.getPartitionRanges();
+        const partitionsScanned = this.getPartitionsForStream(streamIndex);
+        return partitionsScanned.reduce((sum, pi) => sum + (partRanges[pi].end - partRanges[pi].start), 0);
+      }
+
+      // Utilization: what fraction of total DB IO is used
+      getUtilization() {
+        const cfg = this._config;
+        const totalScanWork = Array.from({ length: cfg.streamCount }, (_, i) => this.getStreamScanSize(i))
+          .reduce((s, v) => s + v, 0);
+        // Utilization = total scan work / table size (1.0 = reading entire table once)
+        // With pruning + alignment: each stream scans 1 partition = tableSize total
+        // Without pruning: each stream scans full table = streamCount * tableSize total
+        const util = Math.min(100, (totalScanWork / cfg.tableSize) * (100 / cfg.streamCount));
+        return util;
+      }
+
+      // Effective throughput per stream (records DELIVERED per second)
+      // Key insight: same throughput regardless of pruning.
+      // FTS achieves the same delivery rate but at higher DB utilization.
+      getEffectiveThroughput() {
+        const cfg = this._config;
+        const perStream = [];
+
+        for (let i = 0; i < cfg.streamCount; i++) {
+          perStream.push(cfg.baseScanRate);
+        }
+
+        const utilization = this.getUtilization();
+
+        return {
+          perStream,
+          total: perStream.reduce((s, v) => s + v, 0),
+          utilization,
+        };
+      }
+    }
+
+    // ── ThemeManager ─────────────────────────────────────────────────────
+    class ThemeManager {
+      constructor(bus) {
+        this.bus = bus;
+        this.themes = {
+          professional: {
+            '--bg-primary': '#ffffff', '--bg-secondary': '#f8fafc', '--bg-panel': '#f1f5f9',
+            '--text-primary': '#1e293b', '--text-secondary': '#64748b',
+            '--accent-primary': '#2563eb', '--accent-secondary': '#3b82f6',
+            '--accent-success': '#22c55e', '--accent-warning': '#f59e0b', '--accent-danger': '#ef4444',
+            '--border': '#e2e8f0',
+            '--glow-scan': 'rgba(234, 179, 8, 0.6)',
+            '--db-source': '#6366f1', '--db-app': '#8b5cf6',
+            '--stream-colors': ['#3b82f6','#ef4444','#22c55e','#f59e0b','#8b5cf6','#ec4899','#14b8a6','#f97316'],
+          },
+          highContrast: {
+            '--bg-primary': '#ffffff', '--bg-secondary': '#f0f0f0', '--bg-panel': '#e0e0e0',
+            '--text-primary': '#000000', '--text-secondary': '#333333',
+            '--accent-primary': '#0000cc', '--accent-secondary': '#0044ff',
+            '--accent-success': '#008800', '--accent-warning': '#cc8800', '--accent-danger': '#cc0000',
+            '--border': '#999999',
+            '--glow-scan': 'rgba(204, 136, 0, 0.8)',
+            '--db-source': '#0000cc', '--db-app': '#660099',
+            '--stream-colors': ['#0044ff','#cc0000','#008800','#cc8800','#660099','#cc0066','#008888','#cc4400'],
+          },
+          dark: {
+            '--bg-primary': '#0f172a', '--bg-secondary': '#1e293b', '--bg-panel': '#1e293b',
+            '--text-primary': '#e2e8f0', '--text-secondary': '#94a3b8',
+            '--accent-primary': '#38bdf8', '--accent-secondary': '#06b6d4',
+            '--accent-success': '#4ade80', '--accent-warning': '#fbbf24', '--accent-danger': '#f87171',
+            '--border': '#334155',
+            '--glow-scan': 'rgba(251, 191, 36, 0.6)',
+            '--db-source': '#818cf8', '--db-app': '#a78bfa',
+            '--stream-colors': ['#38bdf8','#f87171','#4ade80','#fbbf24','#a78bfa','#f472b6','#2dd4bf','#fb923c'],
+          }
+        };
+        this.bus.on('config-changed', ({ key, value }) => {
+          if (key === 'theme') this.apply(value);
+        });
+      }
+
+      apply(themeName) {
+        const theme = this.themes[themeName];
+        if (!theme) return;
+        Object.entries(theme).forEach(([prop, val]) => {
+          if (prop === '--stream-colors') return;
+          document.documentElement.style.setProperty(prop, val);
+        });
+      }
+
+      getStreamColor(index, themeName) {
+        const theme = this.themes[themeName || 'professional'];
+        return theme['--stream-colors'][index % 8];
+      }
+    }
+
+    // ── ConfigPanel ──────────────────────────────────────────────────────
+    class ConfigPanel {
+      constructor(bus, config) {
+        this.bus = bus;
+        this.config = config;
+        this.container = document.getElementById('config-panel');
+        this.render();
+        this.bindEvents();
+        this.bus.on('config-changed', () => this.update());
+      }
+
+      render() {
+        this.container.innerHTML = `
+          <!-- Row 1: Theme + Scan Mode + Table Size -->
+          <div class="config-row">
+            <div class="config-group">
+              <span class="config-label">Theme:</span>
+              <select class="config-select" id="theme-select">
+                <option value="professional">Professional</option>
+                <option value="highContrast">High Contrast</option>
+                <option value="dark">Dark</option>
+              </select>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group">
+              <span class="config-label">Table Size:</span>
+              <select class="config-select" id="table-size-select">
+                <option value="10000000">10M</option>
+                <option value="50000000">50M</option>
+                <option value="100000000" selected>100M</option>
+                <option value="500000000">500M</option>
+                <option value="1000000000">1B</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Row 2: Partitions toggle + Streams slider + Alignment -->
+          <div class="config-row">
+            <div class="config-group">
+              <span class="config-label">Mode:</span>
+              <button class="toggle-btn active" id="partitions-on" data-val="true">Partition Pruning</button>
+              <button class="toggle-btn" id="partitions-off" data-val="false">Full Table Scan</button>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group">
+              <span class="config-label">Streams:</span>
+              <input type="range" class="config-slider" id="stream-slider" min="1" max="8" value="4">
+              <span class="slider-value" id="stream-value">4</span>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group">
+              <span id="alignment-indicator"></span>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group" id="skew-group">
+              <span class="config-label">Partition Skew:</span>
+              <input type="range" class="config-slider" id="skew-slider" min="0" max="100" value="0">
+              <span class="slider-value" id="skew-value">0%</span>
+            </div>
+          </div>
+
+          <!-- Row 3: Playback Controls -->
+          <div class="config-row">
+            <div class="config-group">
+              <button class="playback-btn" id="play-btn">&#9654; Play</button>
+              <button class="playback-btn" id="pause-btn">&#9646;&#9646; Pause</button>
+              <button class="playback-btn" id="reset-btn">&#8634; Reset</button>
+              <button class="playback-btn" id="step-btn">Step</button>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group">
+              <span class="config-label">Speed:</span>
+              <input type="range" class="config-slider" id="speed-slider" min="1" max="100" value="10">
+              <span class="slider-value" id="speed-value">1.0x</span>
+            </div>
+          </div>
+        `;
+      }
+
+      bindEvents() {
+        // Theme
+        document.getElementById('theme-select').addEventListener('change', e => {
+          this.config.set('theme', e.target.value);
+        });
+
+        // Table size
+        document.getElementById('table-size-select').addEventListener('change', e => {
+          this.config.set('tableSize', parseInt(e.target.value));
+        });
+
+        // Partitions toggle
+        document.getElementById('partitions-on').addEventListener('click', () => {
+          this.config.set('partitionsEnabled', true);
+        });
+        document.getElementById('partitions-off').addEventListener('click', () => {
+          this.config.set('partitionsEnabled', false);
+        });
+
+        // Streams slider
+        document.getElementById('stream-slider').addEventListener('input', e => {
+          const val = parseInt(e.target.value);
+          document.getElementById('stream-value').textContent = val;
+          this.config.set('streamCount', val);
+        });
+
+        // Partition skew slider
+        document.getElementById('skew-slider').addEventListener('input', e => {
+          const val = parseInt(e.target.value) / 100;
+          document.getElementById('skew-value').textContent = Math.round(val * 100) + '%';
+          this.config.set('partitionSkew', val);
+        });
+
+        // Speed slider (logarithmic: 1-100 maps to 0.1x-500x)
+        document.getElementById('speed-slider').addEventListener('input', e => {
+          const raw = parseInt(e.target.value);
+          const speed = raw <= 10 ? raw / 10 : 1 + (raw - 10) * 499 / 90;
+          document.getElementById('speed-value').textContent = speed.toFixed(1) + 'x';
+          this.config.set('animationSpeed', speed);
+        });
+
+        // Playback buttons
+        document.getElementById('play-btn').addEventListener('click', () => this.bus.emit('animation-play'));
+        document.getElementById('pause-btn').addEventListener('click', () => this.bus.emit('animation-pause'));
+        document.getElementById('reset-btn').addEventListener('click', () => this.bus.emit('animation-reset'));
+        document.getElementById('step-btn').addEventListener('click', () => this.bus.emit('animation-step'));
+      }
+
+      update() {
+        const cfg = this.config.getAll();
+
+        // Update partition toggle
+        document.getElementById('partitions-on').classList.toggle('active', cfg.partitionsEnabled);
+        document.getElementById('partitions-off').classList.toggle('active', !cfg.partitionsEnabled);
+
+        // Update alignment indicator
+        const indicator = document.getElementById('alignment-indicator');
+        if (cfg.partitionsEnabled) {
+          if (this.config.isAligned()) {
+            indicator.innerHTML = '<span class="alignment-badge aligned">Aligned</span>';
+          } else {
+            indicator.innerHTML = '<span class="alignment-badge misaligned">Not Aligned</span>';
+          }
+        } else {
+          indicator.innerHTML = '';
+        }
+
+        // Show/hide skew slider only when partitions enabled
+        document.getElementById('skew-group').style.display = cfg.partitionsEnabled ? 'flex' : 'none';
+      }
+    }
+
+    // ── DatabaseRenderer ──────────────────────────────────────────────────
+    class DatabaseRenderer {
+      constructor(bus, config, themes) {
+        this.bus = bus;
+        this.config = config;
+        this.themes = themes;
+        this.svg = d3.select('#main-svg');
+        this.setupSVG();
+        this.bus.on('config-changed', () => this.render());
+      }
+
+      setupSVG() {
+        const defs = this.svg.append('defs');
+
+        // Glow filter for scan highlighting
+        const glowFilter = defs.append('filter')
+          .attr('id', 'glow-scan')
+          .attr('x', '-50%').attr('y', '-50%')
+          .attr('width', '200%').attr('height', '200%');
+        glowFilter.append('feGaussianBlur').attr('stdDeviation', '4').attr('result', 'blur');
+        glowFilter.append('feFlood').attr('flood-color', 'rgba(234, 179, 8, 0.6)').attr('result', 'color');
+        glowFilter.append('feComposite').attr('in', 'color').attr('in2', 'blur').attr('operator', 'in').attr('result', 'glow');
+        const glowMerge = glowFilter.append('feMerge');
+        glowMerge.append('feMergeNode').attr('in', 'glow');
+        glowMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+        this.bgLayer = this.svg.append('g').attr('class', 'bg-layer');
+        this.scanLayer = this.svg.append('g').attr('class', 'scan-layer');
+        this.connectionLayer = this.svg.append('g').attr('class', 'connection-layer');
+        this.particleLayer = this.svg.append('g').attr('class', 'particle-layer');
+        this.dbLayer = this.svg.append('g').attr('class', 'db-layer');
+        this.sourceVizLayer = this.svg.append('g').attr('class', 'source-viz-layer');
+        this.targetVizLayer = this.svg.append('g').attr('class', 'target-viz-layer');
+        this.labelLayer = this.svg.append('g').attr('class', 'label-layer');
+        this.sourceCellGrids = null;
+        this.targetCellGrid = null;
+
+        requestAnimationFrame(() => this.render());
+        window.addEventListener('resize', () => {
+          this.render();
+          this.bus.emit('layout-changed');
+        });
+      }
+
+      getLayout() {
+        const svgEl = this.svg.node();
+        const w = svgEl.clientWidth || 1200;
+        const h = svgEl.clientHeight || 500;
+        const padding = 30;
+        const dbWidth = w * 0.22;
+        const appWidth = w * 0.15;
+        const dbHeight = h * 0.65;
+        const gaugeWidth = 22;
+        const gaugeGap = 8;
+        const braceGap = w * 0.06; // space for brace between DB and flow area
+        const topY = (h - dbHeight) / 2;
+
+        // Gauge on LEFT of DB
+        const gaugeX = padding;
+        const dbX = gaugeX + gaugeWidth + gaugeGap;
+        const appX = w - padding - appWidth;
+        const appGaugeX = appX - gaugeGap - gaugeWidth;
+
+        return {
+          width: w, height: h,
+          sourceDB: { x: dbX, y: topY, width: dbWidth, height: dbHeight },
+          sourceGauges: { x: gaugeX, y: topY, width: gaugeWidth, height: dbHeight },
+          appNode: { x: appX, y: topY, width: appWidth, height: dbHeight * 0.8 },
+          appGauge: { x: appGaugeX, y: topY, width: gaugeWidth, height: dbHeight * 0.8 },
+          braceArea: { x: dbX + dbWidth, width: braceGap },
+          flowArea: {
+            x: dbX + dbWidth + braceGap,
+            y: topY,
+            width: appGaugeX - (dbX + dbWidth + braceGap) - 20,
+            height: dbHeight,
+          },
+        };
+      }
+
+      render() {
+        this.dbLayer.selectAll('*').remove();
+        this.labelLayer.selectAll('*').remove();
+        this.scanLayer.selectAll('*').remove();
+
+        const layout = this.getLayout();
+        const cfg = this.config.getAll();
+        const themeName = cfg.theme;
+        const theme = this.themes.themes[themeName];
+
+        // Source database block
+        this.dbLayer.append('rect')
+          .attr('class', 'db-block')
+          .attr('x', layout.sourceDB.x).attr('y', layout.sourceDB.y)
+          .attr('width', layout.sourceDB.width).attr('height', layout.sourceDB.height)
+          .attr('fill', theme['--bg-secondary'])
+          .attr('stroke', theme['--db-source']);
+
+        this.labelLayer.append('text')
+          .attr('class', 'db-label')
+          .attr('x', layout.sourceDB.x + layout.sourceDB.width / 2)
+          .attr('y', layout.sourceDB.y - 10)
+          .attr('fill', theme['--text-primary'])
+          .text('Source Database');
+
+        this.labelLayer.append('text')
+          .attr('class', 'db-sublabel')
+          .attr('x', layout.sourceDB.x + layout.sourceDB.width / 2)
+          .attr('y', layout.sourceDB.y + layout.sourceDB.height + 18)
+          .text(formatNum(cfg.tableSize) + ' records');
+
+        // Partitions inside source DB
+        if (cfg.partitionsEnabled) {
+          this.drawPartitions(layout, theme);
+        }
+
+        // Source gauges (IO)
+        this.drawGauge(layout.sourceGauges, 'source', theme);
+
+        // Application node
+        const appCenterY = layout.appNode.y + layout.appNode.height / 2;
+        this.dbLayer.append('rect')
+          .attr('class', 'app-node-rect')
+          .attr('x', layout.appNode.x).attr('y', layout.appNode.y)
+          .attr('width', layout.appNode.width).attr('height', layout.appNode.height)
+          .attr('fill', theme['--bg-secondary'])
+          .attr('stroke', theme['--db-app']);
+
+        this.labelLayer.append('text')
+          .attr('class', 'app-node-label')
+          .attr('x', layout.appNode.x + layout.appNode.width / 2)
+          .attr('y', appCenterY + 5)
+          .attr('fill', theme['--text-primary'])
+          .text('Target');
+
+        // App gauge (CPU)
+        this.drawGauge(layout.appGauge, 'app', theme);
+      }
+
+      // Get partition heights proportional to their data sizes
+      _getPartitionHeights() {
+        const partRanges = this.config.getPartitionRanges();
+        const tableSize = this.config.get('tableSize');
+        return partRanges.map(p => (p.end - p.start) / tableSize);
+      }
+
+      drawPartitions(layout, theme) {
+        const partCount = 4;
+        const db = layout.sourceDB;
+        const innerPad = 6;
+        const partGap = 3;
+        const partW = db.width - innerPad * 2;
+        const totalH = db.height - innerPad * 2 - partGap * (partCount - 1);
+        const fractions = this._getPartitionHeights();
+
+        let cursor = db.y + innerPad;
+        for (let i = 0; i < partCount; i++) {
+          const px = db.x + innerPad;
+          const partH = totalH * fractions[i];
+
+          this.dbLayer.append('rect')
+            .attr('class', 'partition-rect')
+            .attr('id', `partition-${i}`)
+            .attr('x', px).attr('y', cursor)
+            .attr('width', partW).attr('height', partH)
+            .attr('fill', theme['--bg-primary'])
+            .attr('stroke', theme['--border'])
+            .attr('rx', 4);
+
+          this.labelLayer.append('text')
+            .attr('class', 'partition-label')
+            .attr('x', px + partW / 2).attr('y', cursor + partH / 2 + 4)
+            .text(`P${i + 1}`);
+
+          cursor += partH + partGap;
+        }
+      }
+
+      drawGauge(area, id, theme) {
+        const barW = 16;
+        const barH = area.height * 0.8;
+        const barX = area.x + (area.width - barW) / 2;
+        const barY = area.y + (area.height - barH) / 2;
+
+        this.dbLayer.append('rect')
+          .attr('class', 'gauge-bar-bg')
+          .attr('x', barX).attr('y', barY)
+          .attr('width', barW).attr('height', barH);
+
+        this.dbLayer.append('rect')
+          .attr('class', 'gauge-bar-fill')
+          .attr('id', `gauge-fill-${id}`)
+          .attr('x', barX).attr('y', barY + barH)
+          .attr('width', barW).attr('height', 0)
+          .attr('fill', theme['--accent-success']);
+
+        this.labelLayer.append('text')
+          .attr('class', 'gauge-label')
+          .attr('x', barX + barW / 2).attr('y', barY + barH + 14)
+          .text(id === 'source' ? 'IO' : 'CPU');
+
+        this.labelLayer.append('text')
+          .attr('class', 'gauge-value')
+          .attr('id', `gauge-value-${id}`)
+          .attr('x', barX + barW / 2).attr('y', barY - 4)
+          .attr('fill', theme['--text-primary'])
+          .text('0%');
+      }
+
+      updateGauge(id, utilPercent) {
+        const fill = d3.select(`#gauge-fill-${id}`);
+        if (fill.empty()) return;
+        const bg = fill.node().previousElementSibling;
+        const barH = parseFloat(bg.getAttribute('height'));
+        const barY = parseFloat(bg.getAttribute('y'));
+        const fillH = barH * (utilPercent / 100);
+        fill.attr('y', barY + barH - fillH).attr('height', fillH);
+
+        const theme = this.themes.themes[this.config.get('theme')];
+        const color = utilPercent > 80 ? theme['--accent-danger'] : utilPercent > 50 ? theme['--accent-warning'] : theme['--accent-success'];
+        fill.attr('fill', color);
+
+        d3.select(`#gauge-value-${id}`).text(Math.round(utilPercent) + '%');
+      }
+
+      // Highlight partitions being scanned (for glow mode)
+      highlightPartitions(partitionIndices, active) {
+        partitionIndices.forEach(pi => {
+          const rect = d3.select(`#partition-${pi}`);
+          if (!rect.empty()) {
+            rect.classed('scan-glow', active);
+            if (active) rect.attr('filter', 'url(#glow-scan)');
+            else rect.attr('filter', null);
+          }
+        });
+      }
+
+      resetHighlights() {
+        d3.selectAll('.partition-rect').classed('scan-glow', false).attr('filter', null);
+      }
+
+      resetGauges() {
+        ['source', 'app'].forEach(id => this.updateGauge(id, 0));
+      }
+
+      // Get Y center of a partition (vertical stack, proportional heights)
+      getPartitionY(partIndex) {
+        const layout = this.getLayout();
+        const db = layout.sourceDB;
+        const innerPad = 6;
+        const partGap = 3;
+        const totalH = db.height - innerPad * 2 - partGap * 3;
+        const fractions = this._getPartitionHeights();
+
+        let y = db.y + innerPad;
+        for (let i = 0; i < partIndex; i++) {
+          y += totalH * fractions[i] + partGap;
+        }
+        return y + totalH * fractions[partIndex] / 2;
+      }
+
+      // Get top and bottom Y of a partition
+      getPartitionBounds(partIndex) {
+        const layout = this.getLayout();
+        const db = layout.sourceDB;
+        const innerPad = 6;
+        const partGap = 3;
+        const totalH = db.height - innerPad * 2 - partGap * 3;
+        const fractions = this._getPartitionHeights();
+
+        let top = db.y + innerPad;
+        for (let i = 0; i < partIndex; i++) {
+          top += totalH * fractions[i] + partGap;
+        }
+        return { top, bottom: top + totalH * fractions[partIndex] };
+      }
+
+      // Draw a curly brace from (x, y1) to (x, y2) opening toward braceTipX
+      _drawBrace(layer, x, y1, y2, braceTipX, color, opacity, strokeWidth) {
+        const mid = (y1 + y2) / 2;
+        const dx = braceTipX - x;
+        const d = `M${x},${y1} C${x + dx * 0.6},${y1} ${x + dx * 0.4},${mid} ${braceTipX},${mid} ` +
+                  `M${braceTipX},${mid} C${x + dx * 0.4},${mid} ${x + dx * 0.6},${y2} ${x},${y2}`;
+        layer.append('path')
+          .attr('d', d)
+          .attr('fill', 'none')
+          .attr('stroke', color)
+          .attr('stroke-width', strokeWidth)
+          .attr('stroke-opacity', opacity);
+      }
+
+      drawConnections(streams, themeName) {
+        this.connectionLayer.selectAll('*').remove();
+        const layout = this.getLayout();
+        const cfg = this.config.getAll();
+        const theme = this.themes.themes[themeName];
+        const colors = theme['--stream-colors'];
+        const streamCount = streams.length;
+
+        const lineStartX = layout.flowArea.x;
+        const lineEndX = layout.appGauge.x - 8;
+        const appSpacing = layout.appNode.height / (streamCount + 1);
+
+        // Brace geometry: in the brace area between DB and flow area
+        const db = layout.sourceDB;
+        const braceX = db.x + db.width + 4;
+        const braceTipX = braceX + layout.braceArea.width * 0.7;
+        const innerPad = 6;
+
+        streams.forEach((stream, i) => {
+          if (stream.state === 'idle') return;
+          const color = colors[i % 8];
+          const appY = layout.appNode.y + appSpacing * (i + 1);
+          const isActive = stream.state === 'active';
+          const lineOpacity = isActive ? 0.5 : 0.2;
+          const lineWidth = isActive ? 2 : 1;
+
+          if (cfg.partitionsEnabled && stream.partitionsScanned.length === 1) {
+            // Partition pruning: brace covering just this partition
+            const pi = stream.partitionsScanned[0];
+            const bounds = this.getPartitionBounds(pi);
+            const partTop = bounds.top;
+            const partBot = bounds.bottom;
+            this._drawBrace(this.connectionLayer, braceX, partTop, partBot, braceTipX,
+              color, isActive ? 0.6 : 0.25, isActive ? 1.5 : 1);
+
+            // Line from one partition to app
+            const partY = this.getPartitionY(stream.partitionsScanned[0]);
+
+            this.connectionLayer.append('line')
+              .attr('x1', lineStartX).attr('y1', partY)
+              .attr('x2', lineEndX).attr('y2', appY)
+              .attr('stroke', color).attr('stroke-width', lineWidth)
+              .attr('stroke-opacity', lineOpacity);
+
+            // Query label on the line
+            const midX = (lineStartX + lineEndX) / 2;
+            const midY = (partY + appY) / 2;
+            const partRanges = this.config.getPartitionRanges();
+            const pr = partRanges[stream.partitionsScanned[0]];
+            this.connectionLayer.append('text')
+              .attr('x', midX).attr('y', midY - 6)
+              .attr('text-anchor', 'middle')
+              .attr('font-size', '9px')
+              .attr('font-family', 'var(--font-mono)')
+              .attr('fill', color).attr('fill-opacity', 0.8)
+              .text(`WHERE id>${formatNum(pr.start)} AND id<${formatNum(pr.end)}`);
+          } else {
+            // Full table scan: brace covering entire DB
+            this._drawBrace(this.connectionLayer, braceX, db.y + innerPad, db.y + db.height - innerPad, braceTipX,
+              color, isActive ? 0.6 : 0.25, isActive ? 1.5 : 1);
+
+            // "wysięgnik" — scanning arm spanning all partitions
+            const dbCenterY = db.y + db.height / 2;
+
+            // Vertical arm X position: stagger per stream so they don't overlap
+            const armZoneWidth = (lineEndX - lineStartX) * 0.25;
+            const armX = lineStartX + 10 + (i / Math.max(1, streamCount - 1)) * (armZoneWidth - 10);
+
+            if (cfg.partitionsEnabled) {
+              const topPartY = this.getPartitionY(0);
+              const botPartY = this.getPartitionY(3);
+
+              // Vertical spine of the arm
+              this.connectionLayer.append('line')
+                .attr('x1', armX).attr('y1', topPartY)
+                .attr('x2', armX).attr('y2', botPartY)
+                .attr('stroke', color).attr('stroke-width', isActive ? 2 : 1)
+                .attr('stroke-opacity', isActive ? 0.5 : 0.2);
+
+              // Horizontal taps from brace tip to spine
+              for (let pi = 0; pi < 4; pi++) {
+                const partY = this.getPartitionY(pi);
+                this.connectionLayer.append('line')
+                  .attr('x1', braceTipX).attr('y1', partY)
+                  .attr('x2', armX).attr('y2', partY)
+                  .attr('stroke', color).attr('stroke-width', 1)
+                  .attr('stroke-opacity', isActive ? 0.35 : 0.15);
+              }
+
+              // Animated scan indicator — dot sweeping along the vertical spine
+              if (isActive) {
+                const scanY = topPartY + (botPartY - topPartY) * stream.scanProgress;
+                this.connectionLayer.append('circle')
+                  .attr('cx', armX).attr('cy', scanY)
+                  .attr('r', 4).attr('fill', color).attr('fill-opacity', 0.9);
+                // Small glow ring
+                this.connectionLayer.append('circle')
+                  .attr('cx', armX).attr('cy', scanY)
+                  .attr('r', 7).attr('fill', 'none')
+                  .attr('stroke', color).attr('stroke-width', 1.5)
+                  .attr('stroke-opacity', 0.4);
+              }
+
+              // Main line from arm to app
+              this.connectionLayer.append('line')
+                .attr('x1', armX).attr('y1', dbCenterY)
+                .attr('x2', lineEndX).attr('y2', appY)
+                .attr('stroke', color).attr('stroke-width', lineWidth)
+                .attr('stroke-opacity', lineOpacity);
+            } else {
+              // No partitions: simple line from DB center
+              this.connectionLayer.append('line')
+                .attr('x1', lineStartX).attr('y1', dbCenterY)
+                .attr('x2', lineEndX).attr('y2', appY)
+                .attr('stroke', color).attr('stroke-width', lineWidth)
+                .attr('stroke-opacity', lineOpacity);
+            }
+
+            // Query label
+            const labelX = armX + (lineEndX - armX) / 2;
+            const labelY = (dbCenterY + appY) / 2;
+            this.connectionLayer.append('text')
+              .attr('x', labelX).attr('y', labelY - 6)
+              .attr('text-anchor', 'middle')
+              .attr('font-size', '9px')
+              .attr('font-family', 'var(--font-mono)')
+              .attr('fill', color).attr('fill-opacity', 0.8)
+              .text(`WHERE id%${streamCount}=${i}`);
+          }
+        });
+      }
+
+      // ── Source pixel grid (drain effect) ────────────────────────────────
+      _buildSourceGrid(partCount) {
+        const layout = this.getLayout();
+        const db = layout.sourceDB;
+        const innerPad = 6;
+        const partGap = 3;
+        const cellSize = 4;
+        const cellGap = 1;
+        const step = cellSize + cellGap;
+        const pad = 4;
+
+        this.sourceCellGrids = [];
+        const fractions = this._getPartitionHeights();
+        const totalH = db.height - innerPad * 2 - partGap * (partCount - 1);
+
+        let cursor = db.y + innerPad;
+        for (let i = 0; i < partCount; i++) {
+          const partH = totalH * fractions[i];
+          const py = cursor;
+          cursor += partH + partGap;
+          const areaW = db.width - innerPad * 2 - pad * 2;
+          const areaH = partH - pad * 2;
+          const cols = Math.max(1, Math.floor(areaW / step));
+          const rows = Math.max(1, Math.floor(areaH / step));
+          const gridW = cols * step - cellGap;
+          const gridH = rows * step - cellGap;
+          const offsetX = db.x + innerPad + pad + (areaW - gridW) / 2;
+          const offsetY = py + pad + (areaH - gridH) / 2;
+          const totalCells = cols * rows;
+
+          const cells = [];
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              cells.push({ row: r, col: c, idx: i * 10000 + r * cols + c });
+            }
+          }
+
+          this.sourceCellGrids.push({
+            partition: i, cols, rows, totalCells, cellSize, step,
+            offsetX, offsetY, cells
+          });
+        }
+      }
+
+      updateSourceViz(partDrain, themeName) {
+        const partCount = partDrain.length;
+        const colors = this.themes.themes[themeName]['--stream-colors'];
+
+        if (!this.sourceCellGrids) {
+          this._buildSourceGrid(partCount);
+        }
+
+        const allCells = [];
+        for (let i = 0; i < partCount; i++) {
+          const grid = this.sourceCellGrids[i];
+          const progress = partDrain[i]; // 0 = full, 1 = empty
+          const cellsToRemove = Math.floor(progress * grid.totalCells);
+          const cellsToShow = grid.totalCells - cellsToRemove;
+          const visible = grid.cells.slice(grid.cells.length - cellsToShow);
+          visible.forEach(cell => {
+            allCells.push({ ...cell, color: colors[i % 8], grid });
+          });
+        }
+
+        const layer = this.sourceVizLayer;
+        const rects = layer.selectAll('rect').data(allCells, d => d.idx);
+        rects.exit().remove();
+        rects.enter().append('rect')
+          .attr('x', d => d.grid.offsetX + d.col * d.grid.step)
+          .attr('y', d => d.grid.offsetY + d.row * d.grid.step)
+          .attr('width', d => d.grid.cellSize)
+          .attr('height', d => d.grid.cellSize)
+          .attr('fill', d => d.color)
+          .attr('fill-opacity', 0.7)
+          .attr('rx', 1).attr('ry', 1);
+      }
+
+      resetSourceViz() {
+        this.sourceVizLayer.selectAll('*').remove();
+        this.sourceCellGrids = null;
+      }
+
+      // ── Target pixel grid (fill effect) ─────────────────────────────────
+      _buildTargetGrid() {
+        const layout = this.getLayout();
+        const app = layout.appNode;
+        const cellSize = 4;
+        const cellGap = 1;
+        const step = cellSize + cellGap;
+        const pad = 8;
+
+        const areaW = app.width - pad * 2;
+        const areaH = app.height - pad * 2;
+        const cols = Math.max(1, Math.floor(areaW / step));
+        const rows = Math.max(1, Math.floor(areaH / step));
+        const gridW = cols * step - cellGap;
+        const gridH = rows * step - cellGap;
+        const offsetX = app.x + pad + (areaW - gridW) / 2;
+        const offsetY = app.y + pad + (areaH - gridH) / 2;
+        const totalCells = cols * rows;
+
+        const cells = [];
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            cells.push({ row: r, col: c, idx: r * cols + c });
+          }
+        }
+
+        this.targetCellGrid = { cols, rows, totalCells, cellSize, step, offsetX, offsetY, cells };
+      }
+
+      updateTargetViz(fillProgress, themeName) {
+        const theme = this.themes.themes[themeName];
+        if (!this.targetCellGrid) this._buildTargetGrid();
+
+        const grid = this.targetCellGrid;
+        const cellsToFill = Math.floor(fillProgress * grid.totalCells);
+        const filled = grid.cells.slice(0, cellsToFill);
+
+        const layer = this.targetVizLayer;
+        const rects = layer.selectAll('rect').data(filled, d => d.idx);
+        rects.exit().remove();
+        rects.enter().append('rect')
+          .attr('x', d => grid.offsetX + d.col * grid.step)
+          .attr('y', d => grid.offsetY + d.row * grid.step)
+          .attr('width', grid.cellSize)
+          .attr('height', grid.cellSize)
+          .attr('fill', theme['--accent-success'])
+          .attr('fill-opacity', 0.7)
+          .attr('rx', 1).attr('ry', 1);
+      }
+
+      resetTargetViz() {
+        this.targetVizLayer.selectAll('*').remove();
+        this.targetCellGrid = null;
+      }
+    }
+
+    // ── StreamManager ─────────────────────────────────────────────────────
+    class StreamManager {
+      constructor(bus, config) {
+        this.bus = bus;
+        this.config = config;
+        this.streams = [];
+        this.reset();
+      }
+
+      reset() {
+        const cfg = this.config.getAll();
+        const ranges = this.config.getStreamRanges();
+
+        this.streams = ranges.map((range, i) => ({
+          id: i,
+          state: 'idle',
+          progress: 0,
+          scanProgress: 0,
+          recordsProcessed: 0,
+          recordsDelivered: 0,
+          range,
+          partitionsScanned: this.config.getPartitionsForStream(i),
+          scanSize: this.config.getStreamScanSize(i),
+        }));
+        this.bus.emit('streams-reset', this.streams);
+      }
+
+      tick(deltaTime) {
+        const throughputInfo = this.config.getEffectiveThroughput();
+        let allComplete = true;
+
+        this.streams.forEach((stream, i) => {
+          if (stream.state === 'complete') return;
+          allComplete = false;
+
+          if (stream.state === 'idle') {
+            stream.state = 'active';
+          }
+
+          if (stream.state === 'active') {
+            const deliveryRate = throughputInfo.perStream[i] || 1000;
+            const recordsDelivered = deltaTime * deliveryRate;
+            stream.recordsDelivered += recordsDelivered;
+            // Progress based on delivery (same speed for both modes)
+            stream.scanProgress = Math.min(1, stream.recordsDelivered / stream.range.size);
+            // Records actually scanned = proportional to scanSize
+            stream.recordsProcessed = stream.scanProgress * stream.scanSize;
+
+            if (stream.scanProgress >= 1) {
+              stream.scanProgress = 1;
+              stream.recordsProcessed = stream.scanSize;
+              stream.recordsDelivered = stream.range.size;
+              stream.state = 'complete';
+            }
+          }
+        });
+
+        this.bus.emit('streams-updated', this.streams);
+        return allComplete;
+      }
+
+      getTotalRecordsDelivered() {
+        return this.streams.reduce((sum, c) => sum + c.recordsDelivered, 0);
+      }
+
+      getTotalRecordsScanned() {
+        return this.streams.reduce((sum, c) => sum + c.recordsProcessed, 0);
+      }
+
+      getActiveStreamCount() {
+        return this.streams.filter(c => c.state === 'active').length;
+      }
+    }
+
+    // ── AnimationController ──────────────────────────────────────────────
+    class AnimationController {
+      constructor(bus, config, streamMgr, dbRenderer) {
+        this.bus = bus;
+        this.config = config;
+        this.streamMgr = streamMgr;
+        this.dbRenderer = dbRenderer;
+        this.running = false;
+        this.lastTime = null;
+        this.elapsedTime = 0;
+        this.animFrameId = null;
+
+        this.bus.on('animation-play', () => this.play());
+        this.bus.on('animation-pause', () => this.pause());
+        this.bus.on('animation-reset', () => this.reset());
+        this.bus.on('animation-step', () => this.step());
+        this.bus.on('config-changed', ({ key }) => {
+          if (['theme', 'animationSpeed'].includes(key)) return;
+          this.streamMgr.reset();
+          this.dbRenderer.resetSourceViz();
+          this.dbRenderer.resetTargetViz();
+          this.elapsedTime = 0;
+          this.bus.emit('time-update', 0);
+        });
+      }
+
+      play() {
+        if (this.running) return;
+        this.running = true;
+        this.lastTime = performance.now();
+        this.loop();
+        this.bus.emit('animation-state', 'playing');
+      }
+
+      pause() {
+        this.running = false;
+        if (this.animFrameId) cancelAnimationFrame(this.animFrameId);
+        this.animFrameId = null;
+        this.bus.emit('animation-state', 'paused');
+      }
+
+      reset() {
+        this.pause();
+        this.elapsedTime = 0;
+        this.lastTime = null;
+        this.streamMgr.reset();
+        this.dbRenderer.resetHighlights();
+        this.dbRenderer.resetGauges();
+        this.dbRenderer.resetSourceViz();
+        this.dbRenderer.resetTargetViz();
+        this.dbRenderer.connectionLayer.selectAll('*').remove();
+        this.bus.emit('animation-state', 'idle');
+        this.bus.emit('time-update', 0);
+      }
+
+      step() {
+        this.elapsedTime += 0.5;
+        const allDone = this.streamMgr.tick(0.5);
+        this.updateVisuals();
+        this.bus.emit('time-update', this.elapsedTime);
+        if (allDone) this.bus.emit('animation-state', 'complete');
+      }
+
+      loop() {
+        if (!this.running) return;
+        const now = performance.now();
+        const rawDelta = (now - this.lastTime) / 1000;
+        this.lastTime = now;
+
+        const speed = this.config.get('animationSpeed');
+        const simDelta = rawDelta * speed;
+        this.elapsedTime += simDelta;
+
+        const allDone = this.streamMgr.tick(simDelta);
+        this.updateVisuals();
+        this.bus.emit('time-update', this.elapsedTime);
+
+        if (allDone) {
+          this.updateVisuals();
+          this.pause();
+          this.bus.emit('animation-state', 'complete');
+          return;
+        }
+
+        this.animFrameId = requestAnimationFrame(() => this.loop());
+      }
+
+      updateVisuals() {
+        this.dbRenderer.resetHighlights();
+        const streams = this.streamMgr.streams;
+        const cfg = this.config.getAll();
+        const throughputInfo = this.config.getEffectiveThroughput();
+
+        // Draw connection lines for active/complete streams
+        const visibleStreams = streams.filter(c => c.state === 'active' || c.state === 'complete');
+        if (visibleStreams.length > 0) {
+          this.dbRenderer.drawConnections(streams, cfg.theme);
+        } else {
+          this.dbRenderer.connectionLayer.selectAll('*').remove();
+        }
+
+        // Highlight scanned partitions
+        if (cfg.partitionsEnabled) {
+          streams.forEach(stream => {
+            if (stream.state === 'active') {
+              this.dbRenderer.highlightPartitions(stream.partitionsScanned, true);
+            }
+          });
+        }
+
+        // Drain source pixel grid based on scan progress
+        const partCount = cfg.partitionsEnabled ? 4 : 1;
+        const partDrain = new Array(partCount).fill(0);
+        streams.forEach(stream => {
+          stream.partitionsScanned.forEach(pi => {
+            partDrain[pi] = Math.max(partDrain[pi], stream.scanProgress);
+          });
+        });
+        this.dbRenderer.updateSourceViz(partDrain, cfg.theme);
+
+        // Fill target pixel grid based on overall delivery progress
+        const totalDelivered = this.streamMgr.getTotalRecordsDelivered();
+        const totalToDeliver = cfg.tableSize;
+        const fillProgress = Math.min(1, totalDelivered / totalToDeliver);
+        this.dbRenderer.updateTargetViz(fillProgress, cfg.theme);
+
+        // Update source gauge with utilization (scales down as streams finish)
+        const activeCount = streams.filter(c => c.state === 'active').length;
+        const activeFraction = cfg.streamCount > 0 ? activeCount / cfg.streamCount : 0;
+        const utilization = activeCount > 0 ? throughputInfo.utilization * activeFraction : 0;
+        this.dbRenderer.updateGauge('source', utilization);
+
+        // Update app gauge (simple: active streams / total streams * 80)
+        const appUtil = activeCount > 0 ? (activeCount / cfg.streamCount) * 80 : 0;
+        this.dbRenderer.updateGauge('app', appUtil);
+      }
+    }
+
+    // ── ParticleSystem ────────────────────────────────────────────────────
+    class ParticleSystem {
+      constructor(bus, config, themes, dbRenderer) {
+        this.bus = bus;
+        this.config = config;
+        this.themes = themes;
+        this.dbRenderer = dbRenderer;
+        this.particles = [];
+        this.maxParticlesPerStream = 40;
+
+        this.bus.on('streams-updated', streams => this.update(streams));
+        this.bus.on('streams-reset', () => this.clear());
+        this.bus.on('animation-state', state => {
+          if (state === 'idle' || state === 'complete') this.clear();
+        });
+      }
+
+      update(streams) {
+        const layout = this.dbRenderer.getLayout();
+        const themeName = this.config.get('theme');
+        const colors = this.themes.themes[themeName]['--stream-colors'];
+        const layer = this.dbRenderer.particleLayer;
+        const streamCount = streams.length;
+
+        const throughputInfo = this.config.getEffectiveThroughput();
+        const maxThroughput = Math.max(...throughputInfo.perStream, 1);
+
+        streams.forEach((stream, i) => {
+          if (stream.state !== 'active') {
+            this.particles = this.particles.filter(p => {
+              if (p.streamId === i) { if (p.el) p.el.remove(); return false; }
+              return true;
+            });
+            return;
+          }
+
+          const streamThroughput = throughputInfo.perStream[i] || 1;
+          const absoluteScale = Math.min(100, Math.max(0.5, 1 + 99 * (streamThroughput - 5000) / 95000));
+          const relativeScale = Math.max(0.3, streamThroughput / maxThroughput);
+          const particleScale = absoluteScale * relativeScale;
+          const maxForThisStream = Math.ceil(this.maxParticlesPerStream * Math.min(particleScale, 1));
+
+          // Match connection line endpoints exactly
+          const lineStartX = layout.flowArea.x;
+          const endX = layout.appGauge.x - 8;
+          const appSpacing = layout.appNode.height / (streamCount + 1);
+          const endY = layout.appNode.y + appSpacing * (i + 1);
+
+          let startX, startY;
+          const cfg = this.config.getAll();
+          if (cfg.partitionsEnabled && stream.partitionsScanned.length === 1) {
+            // Partition pruning: particle originates from brace tip
+            startX = lineStartX;
+            startY = this.dbRenderer.getPartitionY(stream.partitionsScanned[0]);
+          } else {
+            // Full table scan: particle starts from arm position
+            const db = layout.sourceDB;
+            const armZoneWidth = (endX - lineStartX) * 0.25;
+            startX = lineStartX + 10 + (i / Math.max(1, streamCount - 1)) * (armZoneWidth - 10);
+            startY = db.y + db.height / 2;
+          }
+
+          const existing = this.particles.filter(p => p.streamId === i).length;
+          if (existing < maxForThisStream) {
+            this.particles.push({
+              streamId: i, t: Math.random() * 0.3,
+              baseSpeed: 0.012 + Math.random() * 0.008,
+              yOffset: (Math.random() - 0.5) * 8 * Math.sqrt(absoluteScale),
+              startX, startY, endX, endY,
+              el: layer.append('circle')
+                .attr('class', 'particle')
+                .attr('r', 2 + Math.random() * 1.5)
+                .attr('fill', colors[i % 8]).attr('opacity', 0)
+            });
+          }
+        });
+
+        // Move all particles — speed scales with animationSpeed
+        const speedScale = Math.max(1, Math.sqrt(Math.min(this.config.get('animationSpeed'), 20)));
+        this.particles = this.particles.filter(p => {
+          p.t += p.baseSpeed * speedScale;
+          if (p.t >= 1) { if (p.el) p.el.remove(); return false; }
+
+          const x = p.startX + (p.endX - p.startX) * p.t;
+          const y = p.startY + (p.endY - p.startY) * p.t;
+          const wave = Math.sin(p.t * Math.PI * 2) * (2 + speedScale * 2);
+          p.el.attr('cx', x).attr('cy', y + wave + p.yOffset);
+          p.el.attr('opacity', p.t < 0.1 ? p.t * 8 : p.t > 0.9 ? (1 - p.t) * 8 : 0.7);
+          return true;
+        });
+      }
+
+      clear() {
+        this.particles.forEach(p => { if (p.el) p.el.remove(); });
+        this.particles = [];
+      }
+    }
+
+    // ── UtilizationChart (Dual-Axis) ────────────────────────────────────
+    class UtilizationChart {
+      constructor(bus, config, streamMgr) {
+        this.bus = bus;
+        this.config = config;
+        this.streamMgr = streamMgr;
+        this.data = [];
+        this.lastRenderTime = 0;
+        this.startWallTime = null;
+        this.margin = { top: 12, right: 55, bottom: 28, left: 55 };
+
+        this.svg = d3.select('#chart-svg');
+        this.chartG = this.svg.append('g')
+          .attr('transform', `translate(${this.margin.left},${this.margin.top})`);
+
+        this.gridG = this.chartG.append('g').attr('class', 'grid');
+        this.xAxisG = this.chartG.append('g').attr('class', 'axis x-axis');
+        this.yAxisLeftG = this.chartG.append('g').attr('class', 'axis y-axis-left');
+        this.yAxisRightG = this.chartG.append('g').attr('class', 'axis y-axis-right');
+        this.utilPath = this.chartG.append('path').attr('class', 'chart-line chart-line-util');
+        this.throughputPath = this.chartG.append('path').attr('class', 'chart-line chart-line-throughput');
+
+        // Labels
+        this.chartG.append('text')
+          .attr('class', 'chart-label')
+          .attr('x', 4).attr('y', -2)
+          .attr('fill', 'var(--accent-danger)')
+          .text('Utilization (%)');
+
+        this.chartG.append('text')
+          .attr('class', 'chart-label')
+          .attr('x', 110).attr('y', -2)
+          .attr('fill', 'var(--accent-primary)')
+          .text('Throughput (rec/s)');
+
+        this.bus.on('time-update', () => this.onTick());
+        this.bus.on('animation-state', (state) => {
+          if (state === 'idle') {
+            this.data = [];
+            this.startWallTime = null;
+            this.render();
+          }
+        });
+
+        window.addEventListener('resize', () => this.render());
+      }
+
+      onTick() {
+        const now = performance.now() / 1000;
+        if (!this.startWallTime) this.startWallTime = now;
+        const t = now - this.startWallTime;
+
+        const activeCount = this.streamMgr.getActiveStreamCount();
+        const totalStreams = this.config.get('streamCount');
+        const baseScanRate = this.config.get('baseScanRate');
+        const throughputInfo = this.config.getEffectiveThroughput();
+        const activeFraction = totalStreams > 0 ? activeCount / totalStreams : 0;
+        this.data.push({
+          time: t,
+          utilization: throughputInfo.utilization * activeFraction,
+          throughput: activeCount * baseScanRate,
+        });
+
+        // Throttle rendering to ~10fps
+        if (now * 1000 - this.lastRenderTime < 100) return;
+        this.lastRenderTime = now * 1000;
+        this.render();
+      }
+
+      render() {
+        if (this.data.length < 2) return;
+
+        const el = document.getElementById('utilization-chart');
+        const w = el.clientWidth - this.margin.left - this.margin.right;
+        const h = el.clientHeight - this.margin.top - this.margin.bottom;
+        if (w <= 0 || h <= 0) return;
+
+        // Scales
+        const xScale = d3.scaleLinear()
+          .domain([0, d3.max(this.data, d => d.time) || 1])
+          .range([0, w]);
+
+        const yLeftScale = d3.scaleLinear()
+          .domain([0, 100])
+          .range([h, 0]);
+
+        const maxThroughput = d3.max(this.data, d => d.throughput) || 1;
+        const yRightScale = d3.scaleLinear()
+          .domain([0, maxThroughput * 1.1])
+          .range([h, 0]);
+
+        // Grid (based on left Y axis)
+        this.gridG.call(d3.axisLeft(yLeftScale).ticks(4).tickSize(-w).tickFormat(''))
+          .attr('transform', 'translate(0,0)');
+
+        // X axis
+        this.xAxisG
+          .attr('transform', `translate(0,${h})`)
+          .call(d3.axisBottom(xScale).ticks(6).tickFormat(d => d.toFixed(0) + 's'));
+
+        // Left Y axis (utilization %)
+        this.yAxisLeftG.call(d3.axisLeft(yLeftScale).ticks(5).tickFormat(d => d + '%'));
+
+        // Right Y axis (throughput)
+        this.yAxisRightG
+          .attr('transform', `translate(${w},0)`)
+          .call(d3.axisRight(yRightScale).ticks(5).tickFormat(d => {
+            if (d >= 1000) return (d / 1000).toFixed(0) + 'K';
+            return d.toFixed(0);
+          }));
+
+        // Utilization line (red, left axis)
+        const utilLine = d3.line()
+          .x(d => xScale(d.time))
+          .y(d => yLeftScale(d.utilization));
+        this.utilPath.attr('d', utilLine(this.data));
+
+        // Throughput line (blue, right axis)
+        const throughputLine = d3.line()
+          .x(d => xScale(d.time))
+          .y(d => yRightScale(d.throughput));
+        this.throughputPath.attr('d', throughputLine(this.data));
+      }
+    }
+
+    // ── MetricsDashboard ─────────────────────────────────────────────────
+    class MetricsDashboard {
+      constructor(bus, config, streamMgr) {
+        this.bus = bus;
+        this.config = config;
+        this.streamMgr = streamMgr;
+        this.container = document.getElementById('metrics-dashboard');
+        this.elapsedTime = 0;
+        this.render();
+        this.bus.on('streams-updated', () => this.update());
+        this.bus.on('time-update', t => { this.elapsedTime = t; this.update(); });
+        this.bus.on('animation-state', state => {
+          if (state === 'idle') { this.elapsedTime = 0; this.update(); }
+        });
+      }
+
+      render() {
+        this.container.innerHTML = `
+          <div class="metric-card">
+            <span class="metric-value" id="metric-time">00:00.0</span>
+            <span class="metric-label">Time Elapsed</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="metric-scanned">0 / 0</span>
+            <span class="metric-label">Records Scanned</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="metric-throughput">0/s</span>
+            <span class="metric-label">Throughput (rec/s)</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="metric-utilization">0%</span>
+            <span class="metric-label">DB Utilization</span>
+          </div>
+        `;
+      }
+
+      update() {
+        const cfg = this.config.getAll();
+        const throughputInfo = this.config.getEffectiveThroughput();
+        const activeCount = this.streamMgr.getActiveStreamCount();
+        const totalScanned = this.streamMgr.getTotalRecordsScanned();
+        const currentThroughput = activeCount * this.config.get('baseScanRate');
+        const utilization = activeCount > 0
+          ? throughputInfo.utilization * (activeCount / this.config.get('streamCount'))
+          : 0;
+
+        // Time: MM:SS.s
+        const mins = Math.floor(this.elapsedTime / 60);
+        const secs = (this.elapsedTime % 60).toFixed(1);
+        document.getElementById('metric-time').textContent =
+          `${String(mins).padStart(2, '0')}:${secs.padStart(4, '0')}`;
+
+        // Records scanned / total
+        document.getElementById('metric-scanned').textContent =
+          `${formatNum(Math.round(totalScanned))} / ${formatNum(cfg.tableSize)}`;
+
+        // Throughput
+        document.getElementById('metric-throughput').textContent =
+          formatNum(currentThroughput) + '/s';
+
+        // DB Utilization with color coding
+        const utilEl = document.getElementById('metric-utilization');
+        utilEl.textContent = Math.round(utilization) + '%';
+        if (utilization > 80) {
+          utilEl.style.color = 'var(--accent-danger)';
+        } else if (utilization > 50) {
+          utilEl.style.color = 'var(--accent-warning)';
+        } else {
+          utilEl.style.color = 'var(--accent-success)';
+        }
+      }
+    }
+
+    // ── Initialization ────────────────────────────────────────────────────
+    const bus = new EventBus();
+    const config = new ConfigurationManager(bus);
+    const themes = new ThemeManager(bus);
+    themes.apply(config.get('theme'));
+    const panel = new ConfigPanel(bus, config);
+    const dbRenderer = new DatabaseRenderer(bus, config, themes);
+    const streamMgr = new StreamManager(bus, config);
+    const animController = new AnimationController(bus, config, streamMgr, dbRenderer);
+    const particleSys = new ParticleSystem(bus, config, themes, dbRenderer);
+
+    const dashboard = new MetricsDashboard(bus, config, streamMgr);
+    const chart = new UtilizationChart(bus, config, streamMgr);
+
+    // Wire up playback button state
+    bus.on('animation-state', state => {
+      const btn = document.getElementById('play-btn');
+      if (!btn) return;
+      if (state === 'playing') {
+        btn.textContent = '⏸ Pause';
+        btn.classList.add('playing');
+      } else {
+        btn.textContent = '▶ Play';
+        btn.classList.remove('playing');
+      }
+    });
+
+    // Trigger initial update to set alignment badge
+    panel.update();
+
+    // Auto-play
+    bus.emit('animation-play');
+
+    // Expose for debugging
+    window._app = { bus, config, themes, panel, dbRenderer, streamMgr, animController, particleSys, dashboard, chart };
+  </script>
+</body>
+</html>

@@ -1,0 +1,2113 @@
+<!--
+  Parallel Sync Visualization
+  Copyright (c) 2026 Mike
+  Licensed under the MIT License. See LICENSE file for details.
+
+  Third-party libraries:
+  - D3.js v7.9.0 (https://d3js.org) - BSD 3-Clause License, Copyright 2010-2023 Mike Bostock
+  - html2canvas v1.4.1 (https://html2canvas.hertzen.com) - MIT License, Copyright 2012 Niklas von Hertzen
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data Sync Visualization</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg-primary: #ffffff;
+      --bg-secondary: #f8fafc;
+      --bg-panel: #f1f5f9;
+      --text-primary: #1e293b;
+      --text-secondary: #64748b;
+      --accent-primary: #2563eb;
+      --accent-secondary: #3b82f6;
+      --accent-success: #22c55e;
+      --accent-warning: #f59e0b;
+      --accent-danger: #ef4444;
+      --border: #e2e8f0;
+      --glow-scan: rgba(234, 179, 8, 0.6);
+      --glow-transfer: rgba(59, 130, 246, 0.6);
+      --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      --font-mono: 'Cascadia Code', 'Fira Code', monospace;
+    }
+
+    body { font-family: var(--font); background: var(--bg-primary); color: var(--text-primary); height: 100vh; display: flex; flex-direction: column; transition: background-color 0.3s, color 0.3s; }
+    #config-panel { background: var(--bg-panel); border-bottom: 1px solid var(--border); padding: 12px 20px; flex-shrink: 0; }
+    #visualization { flex: 1; min-height: 0; position: relative; }
+    #main-svg { width: 100%; height: 100%; }
+    #throughput-chart { background: var(--bg-panel); border-top: 1px solid var(--border); height: 150px; flex-shrink: 0; position: relative; }
+    #throughput-chart svg { width: 100%; height: 100%; }
+    #throughput-chart .chart-line { fill: none; stroke: var(--accent-primary); stroke-width: 1.5; }
+    #throughput-chart .grid line { stroke: var(--border); stroke-opacity: 0.5; }
+    #throughput-chart .grid .domain { stroke: none; }
+    #throughput-chart .axis { color: var(--text-secondary); font-size: 10px; }
+    #throughput-chart .chart-label { fill: var(--text-secondary); font-size: 11px; font-weight: 600; }
+    #metrics-dashboard { background: var(--bg-panel); border-top: 1px solid var(--border); padding: 8px 20px; flex-shrink: 0; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .config-row { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; flex-wrap: wrap; }
+    .config-row:last-child { margin-bottom: 0; }
+    .config-group { display: flex; align-items: center; gap: 6px; }
+    .config-label { font-size: 13px; font-weight: 500; color: var(--text-secondary); white-space: nowrap; }
+    .config-separator { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+    .config-slider { width: 120px; accent-color: var(--accent-primary); }
+    .config-input { width: 80px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; background: var(--bg-primary); color: var(--text-primary); }
+    .config-select { padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; background: var(--bg-primary); color: var(--text-primary); }
+    .config-checkbox { accent-color: var(--accent-primary); }
+    .alignment-badge { padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+    .alignment-badge.aligned { background: #dcfce7; color: #166534; }
+    .alignment-badge.misaligned { background: #fef3c7; color: #92400e; }
+    .smart-btn { padding: 4px 12px; border: 1px solid var(--accent-primary); background: transparent; color: var(--accent-primary); border-radius: 4px; font-size: 12px; cursor: pointer; transition: all 0.15s; }
+    .smart-btn:hover { background: var(--accent-primary); color: white; }
+    .playback-btn { padding: 6px 12px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 4px; font-size: 14px; cursor: pointer; transition: all 0.15s; }
+    .playback-btn:hover { background: var(--accent-secondary); color: white; }
+    .playback-btn.playing { background: var(--accent-primary); color: white; }
+    .slider-value { font-size: 12px; font-weight: 600; color: var(--accent-primary); min-width: 28px; text-align: center; }
+    .db-block { stroke-width: 2; rx: 8; ry: 8; }
+    .db-label { font-size: 16px; font-weight: 700; text-anchor: middle; }
+    .db-sublabel { font-size: 11px; text-anchor: middle; fill: var(--text-secondary); }
+    .partition-rect { stroke-width: 1; }
+    .partition-label { font-size: 10px; text-anchor: middle; fill: var(--text-secondary); }
+    .particle { pointer-events: none; }
+    .metric-card { display: flex; flex-direction: column; align-items: center; padding: 4px 10px; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border); min-width: 100px; }
+    .metric-value { font-size: 16px; font-weight: 700; color: var(--accent-primary); font-family: var(--font-mono); }
+    .metric-label { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+    .duration-btn { padding: 4px 10px; border: 1px solid var(--accent-primary); background: transparent; color: var(--accent-primary); border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+    .duration-btn:hover { background: var(--accent-primary); color: white; }
+    .duration-btn.active { background: var(--accent-primary); color: white; }
+    .distribution-btn { padding: 4px 10px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 12px; cursor: pointer; transition: all 0.15s; }
+    .distribution-btn:first-child { border-radius: 4px 0 0 4px; }
+    .distribution-btn:not(:first-child):not(:last-child) { border-radius: 0; }
+    .distribution-btn:last-child { border-radius: 0 4px 4px 0; }
+    .distribution-btn.active { background: var(--accent-primary); color: white; border-color: var(--accent-primary); }
+    .gauge-bar-bg { fill: var(--bg-secondary); stroke: var(--border); stroke-width: 1; rx: 2; }
+    .gauge-bar-fill { rx: 2; transition: height 0.1s; }
+    .gauge-label { font-size: 9px; text-anchor: middle; fill: var(--text-secondary); }
+    .gauge-value { font-size: 8px; text-anchor: middle; font-weight: 600; }
+    .sync-node-rect { stroke-width: 2; rx: 6; ry: 6; }
+    .sync-node-label { font-size: 11px; font-weight: 600; text-anchor: middle; }
+    .sync-node-cpu { font-size: 10px; font-weight: 700; }
+    .partition-fill { }
+    .target-fill { transition: height 0.1s; }
+    .export-option:hover { background: var(--accent-primary); color: white; }
+
+    @keyframes bottleneck-pulse {
+      0%, 100% { stroke-opacity: 0.4; }
+      50% { stroke-opacity: 0.9; }
+    }
+    .bottleneck-glow {
+      stroke: #ef4444 !important;
+      stroke-width: 6 !important;
+      filter: url(#bottleneck-glow-filter);
+      animation: bottleneck-pulse 1.5s ease-in-out infinite;
+    }
+    .gauge-bottleneck {
+      fill: #ef4444 !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="config-panel"></div>
+  <div id="visualization">
+    <svg id="main-svg"></svg>
+  </div>
+  <div id="throughput-chart"><svg id="chart-svg"></svg></div>
+  <div id="metrics-dashboard"></div>
+  <div id="version-bar" style="position:fixed; bottom:0; left:50%; transform:translateX(-50%); font-size:9px; color:var(--text-secondary); opacity:0.4; pointer-events:none;">v2026.02.25</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
+  <script>
+    // ── Shared utility ──────────────────────────────────────────────────
+    function formatNum(n) {
+      if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1) + 'B';
+      if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+      if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+      return Math.round(n).toString();
+    }
+
+    // ── Labels (URL-parameterized) ─────────────────────────────────────────
+    const Labels = (() => {
+      const params = new URLSearchParams(window.location.hash.slice(1));
+      return {
+        source:    params.get('source')    || 'Source',
+        target:    params.get('target')    || 'Target',
+        node:      params.get('node')      || 'Node',
+        stream:    params.get('stream')    || 'Stream',
+        streamAbbr() { return this.stream[0]; },  // S or C etc.
+        sourceDB() { return `${this.source} Database`; },
+        targetDB() { return `${this.target} Database`; },
+        sourceACU() { return `${this.source} ACU (IO/CPU)`; },
+        targetACU() { return `${this.target} ACU (IO/CPU)`; },
+        nodeName(i) { return `${this.node} ${i + 1}`; },
+        streamName(i) { return `${this.stream} ${i + 1}`; },
+      };
+    })();
+
+    // ── EventBus ──────────────────────────────────────────────────────────
+    class EventBus {
+      constructor() { this._listeners = {}; }
+      on(event, callback) { (this._listeners[event] ||= []).push(callback); }
+      off(event, callback) {
+        if (!this._listeners[event]) return;
+        this._listeners[event] = this._listeners[event].filter(cb => cb !== callback);
+      }
+      emit(event, data) { (this._listeners[event] || []).forEach(cb => cb(data)); }
+    }
+
+    // ── ConfigurationManager ─────────────────────────────────────────────
+    class ConfigurationManager {
+      constructor(bus) {
+        this.bus = bus;
+        this._config = {
+          tableSize: 100_000_000,    // 100M default
+          streamCount: 4,             // 1-16
+          partitionCount: 4,         // 1-16
+          throughputPerStream: 10_000,// 1k-20k rec/s
+          theme: 'professional',     // 'professional' | 'highContrast' | 'dark'
+          animationSpeed: 1,         // 0.1-10
+          sourceACU: 16,              // 1-64
+          targetACU: 16,               // 1-64
+          syncNodeCount: 2,         // 1-8
+          distribution: 'even',     // 'all-one' | 'skewed' | 'even'
+          cpuBoundPercent: 80,      // 0=unlimited, 100=fully CPU bottlenecked
+          vcpuPerNode: 4,           // 1-32 vCPUs per sync node
+          cpuCapacityBase: 10000,   // rec/s per node at 100% CPU bound with 4 vCPU
+          cpuCapacity: 12500,       // effective = base * (vcpu/4) * 100 / cpuBoundPercent
+          targetDistribution: 'stacked', // 'stacked' | 'interleaved' | 'scattered'
+          partitionSkew: 0,            // 0 = equal, 1 = max imbalance
+        };
+      }
+
+      get(key) { return this._config[key]; }
+
+      set(key, value) {
+        if (this._config[key] === value) return;
+        this._config[key] = value;
+        // Keep cpuCapacity linked: effective = base * (vcpu/4) * 100 / bound%
+        const recalcCapacity = () => {
+          if (this._config.cpuBoundPercent === 0) { this._config.cpuCapacity = 0; return; }
+          const vcpuScale = this._config.vcpuPerNode / 4;
+          this._config.cpuCapacity = Math.round(this._config.cpuCapacityBase * vcpuScale * 100 / this._config.cpuBoundPercent);
+        };
+        if (key === 'cpuBoundPercent' || key === 'vcpuPerNode') {
+          recalcCapacity();
+        } else if (key === 'cpuCapacity') {
+          // User edited effective directly → recalculate base
+          if (this._config.cpuBoundPercent > 0) {
+            const vcpuScale = this._config.vcpuPerNode / 4;
+            this._config.cpuCapacityBase = Math.round(this._config.cpuCapacity * this._config.cpuBoundPercent / (100 * vcpuScale));
+          }
+        }
+        this.bus.emit('config-changed', { key, value, config: { ...this._config } });
+      }
+
+      getAll() { return { ...this._config }; }
+
+      getStreamRanges() {
+        const { tableSize, streamCount, partitionCount, partitionsEnabled } = this._config;
+        // When aligned, match partition sizes (which may be skewed)
+        if (streamCount === partitionCount) {
+          return this.getPartitionRanges().map(p => ({
+            start: p.start, end: p.end, size: p.end - p.start,
+          }));
+        }
+        const streamSize = Math.ceil(tableSize / streamCount);
+        return Array.from({ length: streamCount }, (_, i) => ({
+          start: i * streamSize,
+          end: Math.min((i + 1) * streamSize, tableSize),
+          size: i === streamCount - 1 ? tableSize - i * streamSize : streamSize,
+        }));
+      }
+
+      getPartitionRanges() {
+        const { tableSize, partitionCount, partitionSkew } = this._config;
+        const s = partitionSkew || 0;
+        const weights = [];
+        for (let i = 0; i < partitionCount; i++) {
+          const t = partitionCount > 1 ? (i / (partitionCount - 1)) * 2 - 1 : 0;
+          weights.push(1 + t * 0.75 * s);
+        }
+        const totalWeight = weights.reduce((a, b) => a + b, 0);
+        const ranges = [];
+        let cursor = 0;
+        for (let i = 0; i < partitionCount; i++) {
+          const size = Math.round(tableSize * weights[i] / totalWeight);
+          const end = i === partitionCount - 1 ? tableSize : cursor + size;
+          ranges.push({ start: cursor, end, label: `P${i + 1}` });
+          cursor = end;
+        }
+        return ranges;
+      }
+
+      _getPartitionHeights() {
+        const partRanges = this.getPartitionRanges();
+        const tableSize = this.get('tableSize');
+        return partRanges.map(p => (p.end - p.start) / tableSize);
+      }
+
+      isAligned() {
+        const { streamCount, partitionCount } = this._config;
+        return streamCount === partitionCount;
+      }
+
+      autoAlign() {
+        const { streamCount } = this._config;
+        this.set('partitionCount', streamCount);
+      }
+
+      getNodeAssignment() {
+        const { streamCount, syncNodeCount, distribution } = this._config;
+        const assignment = Array.from({ length: syncNodeCount }, () => []);
+        if (distribution === 'all-one') {
+          // All streams on node 1
+          for (let i = 0; i < streamCount; i++) assignment[0].push(i);
+        } else if (distribution === 'skewed') {
+          // First node gets ~half, rest split evenly among remaining nodes
+          if (syncNodeCount === 1) {
+            for (let i = 0; i < streamCount; i++) assignment[0].push(i);
+          } else {
+            const firstNodeCount = Math.ceil(streamCount / 2);
+            let idx = 0;
+            for (let c = 0; c < firstNodeCount; c++) assignment[0].push(idx++);
+            for (; idx < streamCount; idx++) {
+              assignment[1 + ((idx - firstNodeCount) % (syncNodeCount - 1))].push(idx);
+            }
+          }
+        } else {
+          // Even: round-robin across all nodes
+          for (let i = 0; i < streamCount; i++) {
+            assignment[i % syncNodeCount].push(i);
+          }
+        }
+        return assignment;
+      }
+
+      getEffectiveThroughput() {
+        const cfg = this._config;
+        const activeStreams = cfg.streamCount;
+
+        const sourceCapacity = cfg.sourceACU * 2000;
+        const perStreamSource = sourceCapacity / activeStreams;
+
+        const targetCapacity = cfg.targetACU * 2000;
+        const perStreamTarget = targetCapacity / activeStreams;
+
+        const nodeAssignment = this.getNodeAssignment();
+        const perStreamNode = [];
+        for (let i = 0; i < activeStreams; i++) {
+          const nodeIdx = nodeAssignment.findIndex(streams => streams.includes(i));
+          const streamsOnNode = nodeAssignment[nodeIdx] ? nodeAssignment[nodeIdx].length : 1;
+          if (cfg.cpuBoundPercent === 0) {
+            perStreamNode.push(Infinity);
+          } else {
+            perStreamNode.push(cfg.cpuCapacity / streamsOnNode);
+          }
+        }
+
+        const perStreamEffective = [];
+        const bottleneckCounts = { source: 0, sync: 0, target: 0 };
+        for (let i = 0; i < activeStreams; i++) {
+          const eff = Math.min(perStreamSource, perStreamNode[i], perStreamTarget);
+          perStreamEffective.push(eff);
+          if (perStreamSource <= perStreamNode[i] && perStreamSource <= perStreamTarget) bottleneckCounts.source++;
+          else if (perStreamNode[i] <= perStreamTarget) bottleneckCounts.sync++;
+          else bottleneckCounts.target++;
+        }
+        const bottleneck = bottleneckCounts.source >= bottleneckCounts.sync && bottleneckCounts.source >= bottleneckCounts.target ? 'source'
+          : bottleneckCounts.sync >= bottleneckCounts.target ? 'sync' : 'target';
+
+        const totalThroughput = perStreamEffective.reduce((s, v) => s + v, 0);
+        const sourceUtil = Math.min(100, (totalThroughput / sourceCapacity) * 100);
+        const targetUtil = Math.min(100, (totalThroughput / targetCapacity) * 100);
+        const perNodeUtil = nodeAssignment.map((streams, n) => {
+          if (cfg.cpuBoundPercent === 0) return 0;
+          const nodeThroughput = streams.reduce((s, ci) => s + perStreamEffective[ci], 0);
+          return Math.min(100, (nodeThroughput / cfg.cpuCapacity) * 100);
+        });
+        const maxSyncUtil = cfg.cpuBoundPercent === 0 || perNodeUtil.length === 0 ? 0 : Math.max(...perNodeUtil);
+
+        // Determine all bottlenecks: whichever has the highest utilization
+        const maxUtil = Math.max(sourceUtil, maxSyncUtil, targetUtil);
+        const bottlenecks = [];
+        if (sourceUtil >= maxUtil - 1) bottlenecks.push('source');
+        if (maxSyncUtil >= maxUtil - 1) bottlenecks.push('sync');
+        if (targetUtil >= maxUtil - 1) bottlenecks.push('target');
+
+        return {
+          perStream: perStreamEffective,
+          total: totalThroughput,
+          bottleneck,
+          bottlenecks,
+          sourceUtil,
+          targetUtil,
+          syncUtil: maxSyncUtil,
+          perNodeUtil,
+        };
+      }
+
+      setDurationPreset(targetSeconds) {
+        const throughputInfo = this.getEffectiveThroughput();
+        const simulatedTime = this._config.tableSize / throughputInfo.total;
+        const speed = simulatedTime / targetSeconds;
+        this.set('animationSpeed', Math.max(0.1, speed));
+      }
+
+    }
+
+    // ── ThemeManager ─────────────────────────────────────────────────────
+    class ThemeManager {
+      constructor(bus) {
+        this.bus = bus;
+        this.themes = {
+          professional: {
+            '--bg-primary': '#ffffff', '--bg-secondary': '#f8fafc', '--bg-panel': '#f1f5f9',
+            '--text-primary': '#1e293b', '--text-secondary': '#64748b',
+            '--accent-primary': '#2563eb', '--accent-secondary': '#3b82f6',
+            '--accent-success': '#22c55e', '--accent-warning': '#f59e0b', '--accent-danger': '#ef4444',
+            '--border': '#e2e8f0',
+            '--glow-scan': 'rgba(234, 179, 8, 0.6)', '--glow-transfer': 'rgba(59, 130, 246, 0.6)',
+            '--db-source': '#6366f1', '--db-target': '#8b5cf6',
+            '--stream-colors': ['#3b82f6','#ef4444','#22c55e','#f59e0b','#8b5cf6','#ec4899','#14b8a6','#f97316',
+                               '#6366f1','#84cc16','#06b6d4','#e11d48','#a855f7','#10b981','#f43f5e','#0ea5e9'],
+          },
+          highContrast: {
+            '--bg-primary': '#ffffff', '--bg-secondary': '#f0f0f0', '--bg-panel': '#e0e0e0',
+            '--text-primary': '#000000', '--text-secondary': '#333333',
+            '--accent-primary': '#0000cc', '--accent-secondary': '#0044ff',
+            '--accent-success': '#008800', '--accent-warning': '#cc8800', '--accent-danger': '#cc0000',
+            '--border': '#999999',
+            '--glow-scan': 'rgba(204, 136, 0, 0.8)', '--glow-transfer': 'rgba(0, 68, 255, 0.8)',
+            '--db-source': '#0000cc', '--db-target': '#660099',
+            '--stream-colors': ['#0044ff','#cc0000','#008800','#cc8800','#660099','#cc0066','#008888','#cc4400',
+                               '#0000cc','#668800','#006688','#880044','#8800cc','#006644','#cc2244','#0088cc'],
+          },
+          dark: {
+            '--bg-primary': '#0f172a', '--bg-secondary': '#1e293b', '--bg-panel': '#1e293b',
+            '--text-primary': '#e2e8f0', '--text-secondary': '#94a3b8',
+            '--accent-primary': '#38bdf8', '--accent-secondary': '#06b6d4',
+            '--accent-success': '#4ade80', '--accent-warning': '#fbbf24', '--accent-danger': '#f87171',
+            '--border': '#334155',
+            '--glow-scan': 'rgba(251, 191, 36, 0.6)', '--glow-transfer': 'rgba(56, 189, 248, 0.6)',
+            '--db-source': '#818cf8', '--db-target': '#a78bfa',
+            '--stream-colors': ['#38bdf8','#f87171','#4ade80','#fbbf24','#a78bfa','#f472b6','#2dd4bf','#fb923c',
+                               '#818cf8','#a3e635','#22d3ee','#fb7185','#c084fc','#34d399','#f43f5e','#0ea5e9'],
+          }
+        };
+        this.bus.on('config-changed', ({ key, value }) => {
+          if (key === 'theme') this.apply(value);
+        });
+      }
+
+      apply(themeName) {
+        const theme = this.themes[themeName];
+        if (!theme) return;
+        Object.entries(theme).forEach(([prop, val]) => {
+          if (prop === '--stream-colors') return;
+          document.documentElement.style.setProperty(prop, val);
+        });
+      }
+
+      getStreamColor(index, themeName) {
+        const theme = this.themes[themeName || 'professional'];
+        return theme['--stream-colors'][index % 16];
+      }
+    }
+
+    class ConfigPanel {
+      constructor(bus, config) {
+        this.bus = bus;
+        this.config = config;
+        this.container = document.getElementById('config-panel');
+        this.render();
+        this.bindEvents();
+        this.bus.on('config-changed', () => this.update());
+      }
+
+      render() {
+        this.container.innerHTML = `
+          <!-- Row 1: Theme -->
+          <div class="config-row">
+            <div class="config-group">
+              <span class="config-label">Theme:</span>
+              <select class="config-select" id="theme-select">
+                <option value="professional">Professional</option>
+                <option value="highContrast">High Contrast</option>
+                <option value="dark">Dark</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Row 2: Table Size + Streams + Partitions -->
+          <div class="config-row">
+            <div class="config-group">
+              <span class="config-label">Table Size:</span>
+              <select class="config-select" id="table-size-select">
+                <option value="10000000">10M</option>
+                <option value="50000000">50M</option>
+                <option value="100000000" selected>100M</option>
+                <option value="500000000">500M</option>
+                <option value="1000000000">1B</option>
+              </select>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group">
+              <span class="config-label">${Labels.stream}s:</span>
+              <input type="range" class="config-slider" id="stream-slider" min="1" max="16" value="4">
+              <span class="slider-value" id="stream-value">4</span>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group">
+              <span class="config-label">Partitions:</span>
+              <input type="range" class="config-slider" id="partition-slider" min="1" max="16" value="4">
+              <span class="slider-value" id="partition-value">4</span>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group" id="skew-group">
+              <span class="config-label">Partition Skew:</span>
+              <input type="range" class="config-slider" id="skew-slider" min="0" max="100" value="0">
+              <span class="slider-value" id="skew-value">0%</span>
+            </div>
+          </div>
+
+          <!-- Row 3: Source ACU + Target ACU -->
+          <div class="config-row">
+            <div class="config-group">
+              <span class="config-label">${Labels.sourceACU()}:</span>
+              <input type="range" class="config-slider" id="source-acu-slider" min="1" max="64" value="16">
+              <span class="slider-value" id="source-acu-value">16</span>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group">
+              <span class="config-label">${Labels.targetACU()}:</span>
+              <input type="range" class="config-slider" id="target-acu-slider" min="1" max="64" value="16">
+              <span class="slider-value" id="target-acu-value">16</span>
+            </div>
+          </div>
+
+          <!-- Row 5: Sync Nodes + Distribution -->
+          <div class="config-row">
+            <div class="config-group">
+              <span class="config-label">${Labels.node}s:</span>
+              <input type="range" class="config-slider" id="sync-node-slider" min="1" max="8" value="2">
+              <span class="slider-value" id="sync-node-value">2</span>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group">
+              <span class="config-label">Distribution:</span>
+              <button class="distribution-btn" data-dist="all-one">All→1</button>
+              <button class="distribution-btn" data-dist="skewed">Skewed</button>
+              <button class="distribution-btn active" data-dist="even">Even</button>
+            </div>
+          </div>
+
+          <!-- Row 5b: Target Distribution + Target View -->
+          <div class="config-row">
+            <div class="config-group">
+              <span class="config-label">Target Distribution:</span>
+              <button class="distribution-btn target-dist-btn active" data-target-dist="stacked">Stacked</button>
+              <button class="distribution-btn target-dist-btn" data-target-dist="interleaved">Interleaved</button>
+              <button class="distribution-btn target-dist-btn" data-target-dist="scattered">Scattered</button>
+            </div>
+          </div>
+
+          <!-- Row 6: CPU Bound + vCPU + CPU Capacity + Throughput -->
+          <div class="config-row">
+            <div class="config-group">
+              <span class="config-label">CPU Bound:</span>
+              <input type="range" class="config-slider" id="cpu-bound-slider" min="0" max="100" value="80">
+              <span class="slider-value" id="cpu-bound-value">80%</span>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group">
+              <span class="config-label">vCPU/Node:</span>
+              <input type="range" class="config-slider" id="vcpu-slider" min="1" max="32" value="4">
+              <span class="slider-value" id="vcpu-value">4</span>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group">
+              <span class="config-label">CPU Capacity (rec/s/node):</span>
+              <input type="number" class="config-input" id="cpu-capacity-input" min="0" max="1000000" step="1000" value="12500">
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group">
+              <span class="config-label">Throughput (rec/s/stream):</span>
+              <input type="number" class="config-input" id="throughput-input" min="1000" max="20000" step="1000" value="10000">
+            </div>
+          </div>
+
+          <!-- Row 7: Alignment -->
+          <div class="config-row">
+            <div class="config-group" id="alignment-group">
+              <span class="alignment-badge misaligned" id="alignment-badge">&#9888; Not aligned</span>
+              <button class="smart-btn" id="auto-align-btn">Auto-align</button>
+            </div>
+          </div>
+
+          <!-- Row 8: Playback + Speed + Duration presets -->
+          <div class="config-row">
+            <div class="config-group">
+              <button class="playback-btn" id="play-btn">&#9654; Play</button>
+              <button class="playback-btn" id="pause-btn">&#9646;&#9646; Pause</button>
+              <button class="playback-btn" id="reset-btn">&#9632; Reset</button>
+              <button class="playback-btn" id="step-btn">&#9654;&#9654; Step</button>
+              <span style="position:relative; display:inline-block;">
+                <button class="playback-btn" id="export-btn">&#128247; Export</button>
+                <div id="export-dropdown" style="display:none; position:absolute; bottom:100%; left:0; margin-bottom:4px; background:var(--bg-panel); border:1px solid var(--border); border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,0.15); z-index:100; white-space:nowrap;">
+                  <div class="export-option" id="export-png" style="padding:8px 16px; cursor:pointer; font-size:12px; border-radius:6px 6px 0 0;">Full Page (PNG)</div>
+                  <div class="export-option" id="export-svg" style="padding:8px 16px; cursor:pointer; font-size:12px; border-radius:0 0 6px 6px;">Visualization (SVG)</div>
+                </div>
+              </span>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group">
+              <span class="config-label">Speed:</span>
+              <input type="range" class="config-slider" id="speed-slider" min="0" max="100" value="10">
+              <span class="slider-value" id="speed-value">1x</span>
+            </div>
+            <div class="config-separator"></div>
+            <div class="config-group">
+              <button class="duration-btn" data-duration="15">15s</button>
+              <button class="duration-btn" data-duration="30">30s</button>
+              <button class="duration-btn" data-duration="60">60s</button>
+            </div>
+          </div>
+        `;
+      }
+
+      bindEvents() {
+        document.getElementById('theme-select').addEventListener('change', e => {
+          this.config.set('theme', e.target.value);
+        });
+        document.getElementById('table-size-select').addEventListener('change', e => {
+          this.config.set('tableSize', parseInt(e.target.value));
+        });
+        document.getElementById('stream-slider').addEventListener('input', e => {
+          this.config.set('streamCount', parseInt(e.target.value));
+        });
+        document.getElementById('throughput-input').addEventListener('change', e => {
+          const val = Math.max(1000, Math.min(20000, parseInt(e.target.value) || 10000));
+          e.target.value = val;
+          this.config.set('throughputPerStream', val);
+        });
+        document.getElementById('partition-slider').addEventListener('input', e => {
+          this.config.set('partitionCount', parseInt(e.target.value));
+        });
+        document.getElementById('skew-slider').addEventListener('input', e => {
+          this.config.set('partitionSkew', parseInt(e.target.value) / 100);
+        });
+        document.getElementById('speed-slider').addEventListener('input', e => {
+          // Logarithmic: 0=0.1x, 50=10x, 100=10000x
+          const val = parseInt(e.target.value);
+          const speed = Math.pow(10, (val / 25) - 1);
+          this.config.set('animationSpeed', speed);
+        });
+        document.getElementById('auto-align-btn').addEventListener('click', () => {
+          this.config.autoAlign();
+        });
+        document.getElementById('play-btn').addEventListener('click', () => this.bus.emit('animation-play'));
+        document.getElementById('pause-btn').addEventListener('click', () => this.bus.emit('animation-pause'));
+        document.getElementById('reset-btn').addEventListener('click', () => this.bus.emit('animation-reset'));
+        document.getElementById('step-btn').addEventListener('click', () => this.bus.emit('animation-step'));
+
+        // Export button + dropdown
+        const exportBtn = document.getElementById('export-btn');
+        const exportDropdown = document.getElementById('export-dropdown');
+        exportBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          exportDropdown.style.display = exportDropdown.style.display === 'none' ? 'block' : 'none';
+        });
+        document.addEventListener('click', () => { exportDropdown.style.display = 'none'; });
+        exportDropdown.addEventListener('click', (e) => e.stopPropagation());
+
+        document.getElementById('export-png').addEventListener('click', () => {
+          exportDropdown.style.display = 'none';
+          exportBtn.parentElement.style.display = 'none';
+          html2canvas(document.body, { backgroundColor: getComputedStyle(document.body).getPropertyValue('--bg-primary') || '#1a1a2e', scale: 2 }).then(canvas => {
+            exportBtn.parentElement.style.display = 'inline-block';
+            const a = document.createElement('a');
+            a.download = 'visualization.png';
+            a.href = canvas.toDataURL('image/png');
+            a.click();
+          }).catch(() => { exportBtn.parentElement.style.display = 'inline-block'; });
+        });
+
+        document.getElementById('export-svg').addEventListener('click', () => {
+          exportDropdown.style.display = 'none';
+          const svg = document.getElementById('main-svg');
+          const serializer = new XMLSerializer();
+          const svgStr = serializer.serializeToString(svg);
+          const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+          const a = document.createElement('a');
+          a.download = 'visualization.svg';
+          a.href = URL.createObjectURL(blob);
+          a.click();
+          URL.revokeObjectURL(a.href);
+        });
+
+        // Source ACU slider
+        document.getElementById('source-acu-slider').addEventListener('input', e => {
+          this.config.set('sourceACU', parseInt(e.target.value));
+        });
+
+        // Target ACU slider
+        document.getElementById('target-acu-slider').addEventListener('input', e => {
+          this.config.set('targetACU', parseInt(e.target.value));
+        });
+
+        // Sync nodes slider
+        document.getElementById('sync-node-slider').addEventListener('input', e => {
+          this.config.set('syncNodeCount', parseInt(e.target.value));
+        });
+
+        // Distribution toggle buttons (source)
+        this.container.querySelectorAll('.distribution-btn:not(.target-dist-btn):not(.target-viz-btn)').forEach(btn => {
+          btn.addEventListener('click', () => this.config.set('distribution', btn.dataset.dist));
+        });
+
+        // Target Distribution buttons
+        this.container.querySelectorAll('.target-dist-btn').forEach(btn => {
+          btn.addEventListener('click', () => this.config.set('targetDistribution', btn.dataset.targetDist));
+        });
+
+        // CPU Bound slider
+        document.getElementById('cpu-bound-slider').addEventListener('input', e => {
+          this.config.set('cpuBoundPercent', parseInt(e.target.value));
+        });
+
+        // vCPU per node slider
+        document.getElementById('vcpu-slider').addEventListener('input', e => {
+          this.config.set('vcpuPerNode', parseInt(e.target.value));
+        });
+
+        // CPU Capacity input (effective value, recalculates base)
+        document.getElementById('cpu-capacity-input').addEventListener('change', e => {
+          const val = Math.max(0, Math.min(1000000, parseInt(e.target.value) || 0));
+          e.target.value = val;
+          this.config.set('cpuCapacity', val);
+        });
+
+        // Duration preset buttons
+        this.container.querySelectorAll('.duration-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            this.config.setDurationPreset(parseInt(btn.dataset.duration));
+            this.container.querySelectorAll('.duration-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+          });
+        });
+      }
+
+      showNotification(msg) {
+        let el = document.getElementById('config-notification');
+        if (!el) {
+          el = document.createElement('div');
+          el.id = 'config-notification';
+          el.style.cssText = 'position:fixed;top:12px;right:12px;padding:8px 16px;background:var(--accent-success);color:white;border-radius:6px;font-size:13px;z-index:999;opacity:0;transition:opacity 0.3s;';
+          document.body.appendChild(el);
+        }
+        el.textContent = msg;
+        el.style.opacity = '1';
+        setTimeout(() => el.style.opacity = '0', 2000);
+      }
+
+      update() {
+        const cfg = this.config.getAll();
+        document.getElementById('stream-slider').value = cfg.streamCount;
+        document.getElementById('stream-value').textContent = cfg.streamCount;
+        document.getElementById('partition-slider').value = cfg.partitionCount;
+        document.getElementById('partition-value').textContent = cfg.partitionCount;
+        document.getElementById('skew-slider').value = Math.round((cfg.partitionSkew || 0) * 100);
+        document.getElementById('skew-value').textContent = Math.round((cfg.partitionSkew || 0) * 100) + '%';
+        // Speed slider (logarithmic)
+        const speedLog = (Math.log10(cfg.animationSpeed) + 1) * 25;
+        document.getElementById('speed-slider').value = Math.max(0, Math.min(100, speedLog));
+        const speedStr = cfg.animationSpeed >= 100 ? Math.round(cfg.animationSpeed) + 'x' :
+                         cfg.animationSpeed >= 10 ? cfg.animationSpeed.toFixed(0) + 'x' :
+                         cfg.animationSpeed >= 1 ? cfg.animationSpeed.toFixed(1) + 'x' :
+                         cfg.animationSpeed.toFixed(2) + 'x';
+        document.getElementById('speed-value').textContent = speedStr;
+        const badge = document.getElementById('alignment-badge');
+        const alignBtn = document.getElementById('auto-align-btn');
+        if (this.config.isAligned()) {
+          badge.className = 'alignment-badge aligned';
+          badge.innerHTML = '&#10003; Aligned';
+          alignBtn.style.display = 'none';
+        } else {
+          badge.className = 'alignment-badge misaligned';
+          badge.innerHTML = '&#9888; Not aligned';
+          alignBtn.style.display = '';
+        }
+
+        // ACU sliders
+        document.getElementById('source-acu-slider').value = cfg.sourceACU;
+        document.getElementById('source-acu-value').textContent = cfg.sourceACU;
+        document.getElementById('target-acu-slider').value = cfg.targetACU;
+        document.getElementById('target-acu-value').textContent = cfg.targetACU;
+
+        // Sync nodes
+        document.getElementById('sync-node-slider').value = cfg.syncNodeCount;
+        document.getElementById('sync-node-value').textContent = cfg.syncNodeCount;
+
+        // Distribution buttons (source)
+        this.container.querySelectorAll('.distribution-btn:not(.target-dist-btn):not(.target-viz-btn)').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.dist === cfg.distribution);
+        });
+
+        // Target Distribution buttons
+        this.container.querySelectorAll('.target-dist-btn').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.targetDist === cfg.targetDistribution);
+        });
+
+        // CPU Bound + vCPU + linked CPU Capacity
+        document.getElementById('cpu-bound-slider').value = cfg.cpuBoundPercent;
+        document.getElementById('cpu-bound-value').textContent = cfg.cpuBoundPercent + '%';
+        document.getElementById('vcpu-slider').value = cfg.vcpuPerNode;
+        document.getElementById('vcpu-value').textContent = cfg.vcpuPerNode;
+        document.getElementById('cpu-capacity-input').value = cfg.cpuCapacity;
+      }
+    }
+
+    // ── DatabaseRenderer ──────────────────────────────────────────────────
+    class DatabaseRenderer {
+      constructor(bus, config, themes) {
+        this.bus = bus;
+        this.config = config;
+        this.themes = themes;
+        this.svg = d3.select('#main-svg');
+        this.targetCells = [];
+        this.targetCellGrid = null;
+        this.sourceCellGrids = null; // per-partition grids
+        this.setupSVG();
+        this.bus.on('config-changed', () => this.render());
+      }
+
+      setupSVG() {
+        const defs = this.svg.append('defs');
+        const glowFilter = defs.append('filter')
+          .attr('id', 'glow-scan')
+          .attr('x', '-50%').attr('y', '-50%')
+          .attr('width', '200%').attr('height', '200%');
+        glowFilter.append('feGaussianBlur').attr('stdDeviation', '4').attr('result', 'blur');
+        glowFilter.append('feFlood').attr('flood-color', 'rgba(234, 179, 8, 0.6)').attr('result', 'color');
+        glowFilter.append('feComposite').attr('in', 'color').attr('in2', 'blur').attr('operator', 'in').attr('result', 'glow');
+        const glowMerge = glowFilter.append('feMerge');
+        glowMerge.append('feMergeNode').attr('in', 'glow');
+        glowMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+        defs.append('filter')
+          .attr('id', 'bottleneck-glow-filter')
+          .attr('x', '-30%').attr('y', '-30%')
+          .attr('width', '160%').attr('height', '160%')
+          .append('feDropShadow')
+          .attr('dx', 0).attr('dy', 0)
+          .attr('stdDeviation', 4)
+          .attr('flood-color', '#ef4444')
+          .attr('flood-opacity', 0.6);
+
+        this.bgLayer = this.svg.append('g').attr('class', 'bg-layer');
+        this.connectionLayer = this.svg.append('g').attr('class', 'connection-layer');
+        this.particleLayer = this.svg.append('g').attr('class', 'particle-layer');
+        this.dbLayer = this.svg.append('g').attr('class', 'db-layer');
+        this.sourceVizLayer = this.svg.append('g').attr('class', 'source-viz-layer');
+        this.targetVizLayer = this.svg.append('g').attr('class', 'target-viz-layer');
+        this.labelLayer = this.svg.append('g').attr('class', 'label-layer');
+
+        // Defer initial render to after layout is settled
+        requestAnimationFrame(() => {
+          this.render();
+        });
+
+        window.addEventListener('resize', () => {
+          this.render();
+          this.bus.emit('layout-changed');
+        });
+      }
+
+      getLayout() {
+        const svgEl = this.svg.node();
+        const w = svgEl.clientWidth || 1200;
+        const h = svgEl.clientHeight || 500;
+        const padding = 30;
+        const dbWidth = w * 0.13;
+        const flowWidth = w * 0.14;
+        const syncWidth = w * 0.18;
+        const dbHeight = h * 0.65;
+        const gaugeWidth = 22;
+        const gaugeGap = 8;
+        const gaugeAreaWidth = 22;  // single IO/CPU bar, width scales with ACU
+        const topY = (h - dbHeight) / 2;
+
+        const sourceX = padding;
+        const sourceGaugeX = sourceX + dbWidth + gaugeGap;
+        const flowLeftX = sourceGaugeX + gaugeAreaWidth + gaugeGap;
+        const syncX = flowLeftX + flowWidth;
+        const flowRightX = syncX + syncWidth;
+        const targetGaugeX = flowRightX + flowWidth;
+        const targetX = targetGaugeX + gaugeAreaWidth + gaugeGap;
+
+        return {
+          width: w, height: h, padding,
+          source: { x: sourceX, y: topY, width: dbWidth, height: dbHeight },
+          sourceGauges: { x: sourceGaugeX, y: topY, width: gaugeWidth },
+          flowLeft: { x: flowLeftX, y: 0, width: flowWidth, height: h },
+          syncNodes: { x: syncX, y: topY, width: syncWidth, height: dbHeight },
+          flowRight: { x: flowRightX, y: 0, width: flowWidth, height: h },
+          targetGauges: { x: targetGaugeX, y: topY, width: gaugeWidth },
+          target: { x: targetX, y: topY, width: dbWidth, height: dbHeight },
+        };
+      }
+
+      render() {
+        const layout = this.getLayout();
+        const cfg = this.config.getAll();
+        const themeName = cfg.theme;
+
+        this.dbLayer.selectAll('*').remove();
+        this.labelLayer.selectAll('*').remove();
+        this.resetSourceViz();
+        this.resetTargetViz();
+
+        // Source database with partitions
+        this.drawDatabase(layout.source, Labels.source, Labels.sourceDB(), this.themes.themes[themeName]['--db-source']);
+        this.drawPartitions(layout.source, cfg.partitionCount, themeName);
+
+        // Target database (single block, no partitions)
+        this.drawDatabase(layout.target, Labels.target, Labels.targetDB(), this.themes.themes[themeName]['--db-target']);
+
+        // IO/CPU gauges for both databases
+        this.drawGauges(layout.sourceGauges, layout.source.height, 'source');
+        this.drawGauges(layout.targetGauges, layout.target.height, 'target');
+
+        // Sync nodes
+        this.drawSyncNodes(layout.syncNodes, cfg.syncNodeCount, themeName);
+      }
+
+      drawDatabase(rect, label, sublabel, color) {
+        this.dbLayer.append('rect')
+          .attr('class', 'db-block')
+          .attr('x', rect.x).attr('y', rect.y)
+          .attr('width', rect.width).attr('height', rect.height)
+          .attr('fill', color).attr('fill-opacity', 0.15)
+          .attr('stroke', color);
+
+        this.labelLayer.append('text')
+          .attr('class', 'db-label')
+          .attr('x', rect.x + rect.width / 2)
+          .attr('y', rect.y - 12)
+          .attr('fill', color)
+          .text(label);
+
+        this.labelLayer.append('text')
+          .attr('class', 'db-sublabel')
+          .attr('x', rect.x + rect.width / 2)
+          .attr('y', rect.y + rect.height + 20)
+          .text(sublabel);
+      }
+
+      drawPartitions(rect, count, themeName) {
+        const gap = 3;
+        const colors = this.themes.themes[themeName]['--stream-colors'];
+        const fractions = this.config._getPartitionHeights();
+        const totalH = rect.height - gap * 2 * count;
+
+        let cursor = rect.y;
+        for (let i = 0; i < count; i++) {
+          const partH = totalH * fractions[i];
+          const py = Math.round(cursor + gap);
+          const ph = Math.round(partH);
+          cursor += partH + gap * 2;
+
+          this.dbLayer.append('rect')
+            .attr('class', 'partition-rect')
+            .attr('data-partition', i)
+            .attr('x', rect.x + 2).attr('y', py)
+            .attr('width', rect.width - 4).attr('height', ph)
+            .attr('fill', 'none')
+            .attr('stroke', colors[i % 16]).attr('stroke-opacity', 0.3)
+            .attr('rx', 3).attr('ry', 3);
+
+          this.labelLayer.append('text')
+            .attr('class', 'partition-label')
+            .attr('x', rect.x + rect.width / 2)
+            .attr('y', Math.round(py + ph / 2 + 4))
+            .text(`P${i + 1}`);
+        }
+      }
+
+      _buildSourceGrid(partCount) {
+        const layout = this.getLayout();
+        const rect = layout.source;
+        const gap = 3;
+        const pad = 4;
+        const cellSize = 4;
+        const cellGap = 1;
+        const step = cellSize + cellGap;
+        const fractions = this.config._getPartitionHeights();
+        const totalH = rect.height - gap * 2 * partCount;
+
+        this.sourceCellGrids = [];
+        let cursor = rect.y;
+        for (let i = 0; i < partCount; i++) {
+          const partH = totalH * fractions[i];
+          const py = Math.round(cursor + gap);
+          const ph = Math.round(partH);
+          cursor += partH + gap * 2;
+          const areaW = rect.width - pad * 2;
+          const areaH = ph - pad * 2;
+          const cols = Math.max(1, Math.floor(areaW / step));
+          const rows = Math.max(1, Math.floor(areaH / step));
+          const gridW = cols * step - cellGap;
+          const gridH = rows * step - cellGap;
+          const offsetX = rect.x + pad + (areaW - gridW) / 2;
+          const offsetY = py + pad + (areaH - gridH) / 2;
+          const totalCells = cols * rows;
+
+          // Build cells top-to-bottom (drain removes from top)
+          const cells = [];
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              cells.push({ row: r, col: c, idx: i * 10000 + r * cols + c });
+            }
+          }
+
+          this.sourceCellGrids.push({
+            partition: i, cols, rows, totalCells, cellSize, step,
+            offsetX, offsetY, cells
+          });
+        }
+      }
+
+      updateSourceViz(partDrain, themeName) {
+        const partCount = partDrain.length;
+        const colors = this.themes.themes[themeName]['--stream-colors'];
+
+        if (!this.sourceCellGrids) {
+          this._buildSourceGrid(partCount);
+        }
+
+        const allCells = [];
+        for (let i = 0; i < partCount; i++) {
+          const grid = this.sourceCellGrids[i];
+          const progress = partDrain[i]; // 0 = full, 1 = empty
+          const cellsToRemove = Math.floor(progress * grid.totalCells);
+          const cellsToShow = grid.totalCells - cellsToRemove;
+          // Show cells from bottom (keep bottom cells, remove from top)
+          const visible = grid.cells.slice(grid.cells.length - cellsToShow);
+          visible.forEach(cell => {
+            allCells.push({ ...cell, color: colors[i % 16], grid });
+          });
+        }
+
+        const layer = this.sourceVizLayer;
+        const rects = layer.selectAll('rect').data(allCells, d => d.idx);
+        rects.exit().remove();
+        rects.enter().append('rect')
+          .attr('x', d => d.grid.offsetX + d.col * d.grid.step)
+          .attr('y', d => d.grid.offsetY + d.row * d.grid.step)
+          .attr('width', d => d.grid.cellSize)
+          .attr('height', d => d.grid.cellSize)
+          .attr('fill', d => d.color)
+          .attr('fill-opacity', 0.7)
+          .attr('rx', 1).attr('ry', 1);
+      }
+
+      resetSourceViz() {
+        this.sourceVizLayer.selectAll('*').remove();
+        this.sourceCellGrids = null;
+      }
+
+      // progress: 0 = empty, 1 = full
+      updateTargetFill(progress) {
+        const layout = this.getLayout();
+        const themeName = this.config.get('theme');
+        const color = this.themes.themes[themeName]['--db-target'];
+        const fillHeight = layout.target.height * Math.min(1, progress);
+
+        this.dbLayer.selectAll('.target-fill').remove();
+
+        if (fillHeight > 0) {
+          this.dbLayer.append('rect')
+            .attr('class', 'target-fill')
+            .attr('x', layout.target.x + 2)
+            .attr('y', layout.target.y + layout.target.height - fillHeight)
+            .attr('width', layout.target.width - 4)
+            .attr('height', fillHeight)
+            .attr('fill', color).attr('fill-opacity', 0.3)
+            .attr('rx', 3).attr('ry', 3);
+        }
+      }
+
+      drawGauges(gaugeArea, dbHeight, prefix) {
+        const acu = this.config.get(prefix === 'source' ? 'sourceACU' : 'targetACU');
+        const acuFrac = acu / 64;
+        const barWidth = Math.round(8 + acuFrac * 14);   // 8-22px
+        const barHeight = Math.round(dbHeight * (0.25 + acuFrac * 0.35)); // 25%-60%
+        const x = gaugeArea.x + (22 - barWidth) / 2;     // center in gauge area
+        const y = gaugeArea.y + (dbHeight - barHeight) / 2;
+
+        this.dbLayer.append('rect')
+          .attr('class', 'gauge-bar-bg')
+          .attr('x', x).attr('y', y)
+          .attr('width', barWidth).attr('height', barHeight);
+
+        this.dbLayer.append('rect')
+          .attr('class', `gauge-bar-fill gauge-${prefix}`)
+          .attr('x', x + 1).attr('y', y + barHeight)
+          .attr('width', barWidth - 2).attr('height', 0)
+          .attr('fill', '#3b82f6');
+
+        this.labelLayer.append('text')
+          .attr('class', 'gauge-label')
+          .attr('x', x + barWidth / 2)
+          .attr('y', y + barHeight + 14)
+          .text('ACU');
+
+        this.labelLayer.append('text')
+          .attr('class', 'gauge-label')
+          .attr('x', x + barWidth / 2)
+          .attr('y', y + barHeight + 24)
+          .attr('font-size', '8px')
+          .text('(IO/CPU)');
+
+        this.labelLayer.append('text')
+          .attr('class', `gauge-value gauge-value-${prefix}`)
+          .attr('x', x + barWidth / 2)
+          .attr('y', y - 4)
+          .text('0%');
+      }
+
+      updateGauge(prefix, percent) {
+        const layout = this.getLayout();
+        const gaugeArea = prefix === 'source' ? layout.sourceGauges : layout.targetGauges;
+        const dbHeight = layout.source.height;
+        const acu = this.config.get(prefix === 'source' ? 'sourceACU' : 'targetACU');
+        const acuFrac = acu / 64;
+        const barWidth = Math.round(8 + acuFrac * 14);
+        const barHeight = Math.round(dbHeight * (0.25 + acuFrac * 0.35));
+        const x = gaugeArea.x + (22 - barWidth) / 2;
+        const y = gaugeArea.y + (dbHeight - barHeight) / 2;
+
+        const fillHeight = (barHeight - 2) * (percent / 100);
+        const color = percent < 50 ? '#3b82f6' : percent < 80 ? '#2563eb' : '#1d4ed8';
+
+        this.dbLayer.select(`.gauge-${prefix}`)
+          .attr('x', x + 1)
+          .attr('y', y + barHeight - fillHeight)
+          .attr('width', barWidth - 2)
+          .attr('height', fillHeight)
+          .attr('fill', color);
+
+        this.labelLayer.select(`.gauge-value-${prefix}`)
+          .text(Math.round(percent) + '%');
+      }
+
+      getSyncCpuBarWidth() {
+        const vcpu = this.config.get('vcpuPerNode');
+        return Math.round(vcpu * 2); // 2px per vCPU: 2px at 1, 8px at 4, 64px at 32
+      }
+
+      drawSyncNodes(area, count, themeName) {
+        const nodeGap = 20;
+        const cpuBarWidth = this.getSyncCpuBarWidth();
+        const cpuBarGap = 6;
+        const boxWidth = area.width - cpuBarWidth - cpuBarGap;
+        const nodeHeight = (area.height - (count - 1) * nodeGap) / count;
+        const color = this.themes.themes[themeName]['--accent-secondary'];
+        const colors = this.themes.themes[themeName]['--stream-colors'];
+
+        for (let i = 0; i < count; i++) {
+          const nodeY = area.y + i * (nodeHeight + nodeGap);
+
+          // Sync node box (narrower)
+          this.dbLayer.append('rect')
+            .attr('class', 'sync-node-rect')
+            .attr('data-sync-node', i)
+            .attr('x', area.x).attr('y', nodeY)
+            .attr('width', boxWidth).attr('height', nodeHeight)
+            .attr('fill', color).attr('fill-opacity', 0.05)
+            .attr('stroke', color).attr('stroke-opacity', 0.4);
+
+          // CPU bar background (right of box, shorter than node)
+          const barX = area.x + boxWidth + cpuBarGap;
+          const barHeight = Math.max(16, (nodeHeight - 16) / 2);
+          const barPad = (nodeHeight - barHeight) / 2;
+          this.dbLayer.append('rect')
+            .attr('class', 'sync-cpu-bar-bg')
+            .attr('x', barX).attr('y', nodeY + barPad)
+            .attr('width', cpuBarWidth).attr('height', barHeight)
+            .attr('fill', 'var(--bg-secondary)')
+            .attr('stroke', 'var(--border)').attr('stroke-width', 1)
+            .attr('rx', 2).attr('ry', 2);
+
+          // CPU bar fill (bottom-up)
+          this.dbLayer.append('rect')
+            .attr('class', 'sync-node-fill')
+            .attr('data-sync-node-fill', i)
+            .attr('x', barX + 1).attr('y', nodeY + barPad + barHeight)
+            .attr('width', cpuBarWidth - 2).attr('height', 0)
+            .attr('fill', '#22c55e')
+            .attr('rx', 1).attr('ry', 1);
+
+          // Node label
+          this.labelLayer.append('text')
+            .attr('class', 'sync-node-label')
+            .attr('x', area.x + boxWidth / 2)
+            .attr('y', nodeY - 6)
+            .attr('fill', color)
+            .text(Labels.nodeName(i));
+
+          // CPU label above the bar
+          this.labelLayer.append('text')
+            .attr('class', 'gauge-label')
+            .attr('x', barX + cpuBarWidth / 2)
+            .attr('y', nodeY + barPad - 4)
+            .attr('text-anchor', 'middle')
+            .text('CPU');
+
+          // CPU percentage text (below the bar)
+          this.labelLayer.append('text')
+            .attr('class', 'sync-node-cpu')
+            .attr('data-sync-cpu-text', i)
+            .attr('x', barX + cpuBarWidth / 2)
+            .attr('y', nodeY + barPad + barHeight + 12)
+            .attr('text-anchor', 'middle')
+            .attr('fill', 'var(--text-secondary)')
+            .text('0%');
+
+          // Stream assignment indicators
+          const streamAssignment = this.config.getNodeAssignment();
+          const assignedStreams = streamAssignment[i] || [];
+          const dotSize = 6;
+          const dotGap = 3;
+          const dotsStartX = area.x + (boxWidth - assignedStreams.length * (dotSize + dotGap)) / 2;
+          const dotsY = nodeY + nodeHeight - 16;
+          assignedStreams.forEach((streamIdx, d) => {
+            this.labelLayer.append('circle')
+              .attr('class', 'sync-stream-dot')
+              .attr('cx', dotsStartX + d * (dotSize + dotGap) + dotSize / 2)
+              .attr('cy', dotsY)
+              .attr('r', dotSize / 2)
+              .attr('fill', colors[streamIdx % 16])
+              .attr('opacity', 0.8);
+          });
+        }
+      }
+
+      updateSyncNodeCPU(nodeIndex, percent) {
+        const layout = this.getLayout();
+        const count = this.config.get('syncNodeCount');
+        const cpuBarWidth = this.getSyncCpuBarWidth();
+        const cpuBarGap = 6;
+        const boxWidth = layout.syncNodes.width - cpuBarWidth - cpuBarGap;
+        const nodeHeight = (layout.syncNodes.height - (count - 1) * 20) / count;
+        const y = layout.syncNodes.y + nodeIndex * (nodeHeight + 20);
+        const barX = layout.syncNodes.x + boxWidth + cpuBarGap;
+        const barHeight = Math.max(16, (nodeHeight - 16) / 2);
+        const barPad = (nodeHeight - barHeight) / 2;
+
+        const fillHeight = (barHeight - 2) * (percent / 100);
+        // Note: using attr('fill') not style('fill') so CSS .gauge-bottleneck can override via !important
+        const color = percent < 50 ? '#22c55e' : percent < 80 ? '#eab308' : '#ef4444';
+
+        this.dbLayer.selectAll('.sync-node-fill')
+          .filter(function() { return +d3.select(this).attr('data-sync-node-fill') === nodeIndex; })
+          .attr('x', barX + 1)
+          .attr('width', cpuBarWidth - 2)
+          .attr('y', y + barPad + barHeight - fillHeight)
+          .attr('height', fillHeight)
+          .attr('fill', color);
+
+        this.labelLayer.selectAll('.sync-node-cpu')
+          .filter(function() { return +d3.select(this).attr('data-sync-cpu-text') === nodeIndex; })
+          .text(Math.round(percent) + '%');
+      }
+
+      updateBottleneckIndicators(bottlenecks) {
+        const dbBlocks = this.dbLayer.selectAll('.db-block');
+        const layout = this.getLayout();
+
+        dbBlocks.each(function(d, i) {
+          const el = d3.select(this);
+          const isSource = Math.abs(+el.attr('x') - layout.source.x) < 1;
+          const isTarget = Math.abs(+el.attr('x') - layout.target.x) < 1;
+
+          const isBottleneck = (isSource && bottlenecks.includes('source')) ||
+                               (isTarget && bottlenecks.includes('target'));
+
+          el.classed('bottleneck-glow', isBottleneck);
+        });
+
+        // Gauge fills
+        this.dbLayer.select('.gauge-source')
+          .classed('gauge-bottleneck', bottlenecks.includes('source'));
+        this.dbLayer.select('.gauge-target')
+          .classed('gauge-bottleneck', bottlenecks.includes('target'));
+
+        // Sync node rects
+        const syncBottleneck = bottlenecks.includes('sync');
+        this.dbLayer.selectAll('.sync-node-rect')
+          .classed('bottleneck-glow', syncBottleneck);
+
+        // Sync node CPU bar fills
+        this.dbLayer.selectAll('.sync-node-fill')
+          .classed('gauge-bottleneck', syncBottleneck);
+      }
+
+      highlightPartitions(partitionIndices, active) {
+        this.dbLayer.selectAll('.partition-rect').each(function() {
+          const idx = parseInt(d3.select(this).attr('data-partition'));
+          if (partitionIndices.includes(idx)) {
+            d3.select(this)
+              .classed('partition-active', active)
+              .attr('stroke-opacity', active ? 0.8 : 0.3);
+          }
+        });
+      }
+
+      resetHighlights() {
+        this.dbLayer.selectAll('.partition-rect')
+          .classed('partition-active', false)
+          .attr('stroke-opacity', 0.3);
+      }
+
+      resetDrains() {
+        this.resetSourceViz();
+        this.updateBottleneckIndicators([]);
+      }
+
+      resetTargetFill() {
+        this.dbLayer.selectAll('.target-fill').remove();
+      }
+
+      resetTargetViz() {
+        this.targetVizLayer.selectAll('*').remove();
+        this.targetCells = [];
+        this.targetCellGrid = null;
+      }
+
+      _buildTargetGrid(streamCount) {
+        const layout = this.getLayout();
+        const tgt = layout.target;
+        const pad = 4;
+        const areaW = tgt.width - pad * 2;
+        const areaH = tgt.height - pad * 2;
+
+        const cellSize = 4;
+        const gap = 1;
+        const step = cellSize + gap;
+
+        const cols = Math.max(1, Math.floor(areaW / step));
+        const rows = Math.max(1, Math.floor(areaH / step));
+        const totalCells = cols * rows;
+
+        // Center the grid
+        const gridW = cols * step - gap;
+        const gridH = rows * step - gap;
+        const offsetX = tgt.x + pad + (areaW - gridW) / 2;
+        const offsetY = tgt.y + pad + (areaH - gridH) / 2;
+
+        const grid = { cols, rows, totalCells, cellSize, step, offsetX, offsetY };
+        this.targetCellGrid = grid;
+
+        // Build cell assignment order based on targetDistribution
+        const dist = this.config.get('targetDistribution');
+        const cellsPerStream = Math.ceil(totalCells / streamCount);
+        const cellOrder = [];
+
+        if (dist === 'stacked') {
+          // Each stream gets a horizontal band, fills bottom-to-top within band
+          const rowsPerStream = Math.ceil(rows / streamCount);
+          for (let c = 0; c < streamCount; c++) {
+            const startRow = c * rowsPerStream;
+            const endRow = Math.min((c + 1) * rowsPerStream, rows);
+            for (let r = endRow - 1; r >= startRow; r--) {
+              for (let col = 0; col < cols; col++) {
+                cellOrder.push({ row: r, col, streamId: c, idx: r * cols + col });
+              }
+            }
+          }
+        } else if (dist === 'interleaved') {
+          // Rows alternate between streams, fills bottom-to-top
+          for (let r = rows - 1; r >= 0; r--) {
+            const c = r % streamCount;
+            for (let col = 0; col < cols; col++) {
+              cellOrder.push({ row: r, col, streamId: c, idx: r * cols + col });
+            }
+          }
+        } else {
+          // Scattered: random assignment
+          const indices = [];
+          for (let r = 0; r < rows; r++) {
+            for (let col = 0; col < cols; col++) {
+              indices.push({ row: r, col, idx: r * cols + col });
+            }
+          }
+          // Shuffle
+          for (let i = indices.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [indices[i], indices[j]] = [indices[j], indices[i]];
+          }
+          // Assign streams round-robin through shuffled positions
+          indices.forEach((cell, i) => {
+            cellOrder.push({ ...cell, streamId: i % streamCount });
+          });
+        }
+
+        // Group by stream for easy lookup
+        this.targetCells = cellOrder;
+        return grid;
+      }
+
+      updateTargetViz(streams, themeName) {
+        const streamCount = streams.length;
+        const colors = this.themes.themes[themeName]['--stream-colors'];
+        const tableSize = this.config.get('tableSize');
+
+        // Rebuild grid if needed (layout or config changed)
+        if (!this.targetCellGrid) {
+          this._buildTargetGrid(streamCount);
+        }
+
+        const grid = this.targetCellGrid;
+
+        // Calculate how many cells each stream should have filled
+        const perStreamCells = {};
+        for (let c = 0; c < streamCount; c++) {
+          const streamRecords = streams[c].recordsProcessed;
+          const streamTotal = streams[c].range.size || Math.ceil(tableSize / streamCount);
+          const streamFrac = Math.min(1, streamRecords / streamTotal);
+          const cellsForStream = this.targetCells.filter(cell => cell.streamId === c).length;
+          perStreamCells[c] = Math.floor(streamFrac * cellsForStream);
+        }
+
+        // Collect which cells to show
+        const cellsToShow = [];
+        const streamCounts = {};
+        for (let c = 0; c < streamCount; c++) streamCounts[c] = 0;
+
+        this.targetCells.forEach(cell => {
+          if (streamCounts[cell.streamId] < perStreamCells[cell.streamId]) {
+            cellsToShow.push(cell);
+            streamCounts[cell.streamId]++;
+          }
+        });
+
+        // Efficient update: use D3 data join
+        const layer = this.targetVizLayer;
+        const rects = layer.selectAll('rect').data(cellsToShow, d => d.idx);
+        rects.exit().remove();
+        rects.enter().append('rect')
+          .attr('x', d => grid.offsetX + d.col * grid.step)
+          .attr('y', d => grid.offsetY + d.row * grid.step)
+          .attr('width', grid.cellSize)
+          .attr('height', grid.cellSize)
+          .attr('fill', d => colors[d.streamId % 16])
+          .attr('fill-opacity', 0.7)
+          .attr('rx', 1).attr('ry', 1);
+      }
+
+      resetGauges() {
+        ['source', 'target'].forEach(prefix => { this.updateGauge(prefix, 0); });
+      }
+
+      resetSyncNodes() {
+        const count = this.config.get('syncNodeCount');
+        for (let i = 0; i < count; i++) { this.updateSyncNodeCPU(i, 0); }
+      }
+
+      getStreamSourceY(streamIndex, streamCount, sourceRect) {
+        const partCount = this.config.get('partitionCount');
+        if (streamCount === partCount) {
+          // Aligned: position at center of each partition
+          const fractions = this.config._getPartitionHeights();
+          const gap = 3;
+          const totalH = sourceRect.height - gap * 2 * partCount;
+          let cursor = sourceRect.y;
+          for (let i = 0; i < partCount; i++) {
+            const partH = totalH * fractions[i];
+            if (i === streamIndex) {
+              return cursor + gap + partH / 2;
+            }
+            cursor += partH + gap * 2;
+          }
+        }
+        // Not aligned: equal spacing
+        return sourceRect.y + (sourceRect.height / (streamCount + 1)) * (streamIndex + 1);
+      }
+
+      drawConnections(streams, themeName) {
+        this.connectionLayer.selectAll('*').remove();
+        const layout = this.getLayout();
+        const colors = this.themes.themes[themeName]['--stream-colors'];
+        const streamCount = streams.length;
+        const nodeAssignment = this.config.getNodeAssignment();
+        const nodeCount = this.config.get('syncNodeCount');
+        const nodeHeight = (layout.syncNodes.height - (nodeCount - 1) * 20) / nodeCount;
+
+        streams.forEach((stream, i) => {
+          const nodeIdx = Math.max(0, nodeAssignment.findIndex(arr => arr.includes(i)));
+          const nodeY = layout.syncNodes.y + nodeIdx * (nodeHeight + 20) + nodeHeight / 2;
+
+          // Stage 1: Source -> Sync Node
+          const startX1 = layout.sourceGauges.x + layout.sourceGauges.width * 2 + 12;
+          const endX1 = layout.syncNodes.x;
+          const yStart = this.getStreamSourceY(i, streamCount, layout.source);
+
+          const opacity = stream.state === 'idle' ? 0.1 : stream.state === 'complete' ? 0.2 : 0.5;
+
+          this.connectionLayer.append('line')
+            .attr('x1', startX1).attr('y1', yStart)
+            .attr('x2', endX1).attr('y2', nodeY)
+            .attr('stroke', colors[i % 16])
+            .attr('stroke-width', 1.5).attr('stroke-opacity', opacity)
+            .attr('data-stream', i).attr('data-stage', 'left');
+
+          const mid1X = (startX1 + endX1) / 2;
+          const mid1Y = (yStart + nodeY) / 2;
+          this.connectionLayer.append('text')
+            .attr('x', mid1X).attr('y', mid1Y - 6)
+            .attr('text-anchor', 'middle').attr('font-size', '10px')
+            .attr('fill', colors[i % 16])
+            .text(`${Labels.streamAbbr()}${i + 1}`);
+
+          // Stage 2: Sync Node -> Target
+          const startX2 = layout.syncNodes.x + layout.syncNodes.width;
+          const endX2 = layout.targetGauges.x - 4;
+          const yEnd = layout.target.y + layout.target.height / 2;
+
+          this.connectionLayer.append('line')
+            .attr('x1', startX2).attr('y1', nodeY)
+            .attr('x2', endX2).attr('y2', yEnd)
+            .attr('stroke', colors[i % 16])
+            .attr('stroke-width', 1.5).attr('stroke-opacity', opacity)
+            .attr('data-stream', i).attr('data-stage', 'right');
+        });
+      }
+
+    }
+
+    // ── StreamManager ────────────────────────────────────────────────────
+    class StreamManager {
+      constructor(bus, config) {
+        this.bus = bus;
+        this.config = config;
+        this.streams = [];
+        this.reset();
+      }
+
+      reset() {
+        const cfg = this.config.getAll();
+        const ranges = this.config.getStreamRanges();
+        const nodeAssignment = this.config.getNodeAssignment();
+
+        this.streams = ranges.map((range, i) => ({
+          id: i,
+          state: 'idle',
+          progress: 0,
+          scanProgress: 0,
+          transferProgress: 0,
+          recordsProcessed: 0,
+          range,
+          partitionsScanned: this.getPartitionsForStream(i, cfg),
+          nodeIndex: Math.max(0, nodeAssignment.findIndex(arr => arr.includes(i))),
+        }));
+        this.bus.emit('streams-reset', this.streams);
+      }
+
+      getPartitionsForStream(streamIndex, cfg) {
+        const { streamCount, partitionCount } = cfg;
+        if (streamCount === partitionCount) {
+          return [streamIndex % partitionCount];
+        }
+        return Array.from({ length: partitionCount }, (_, i) => i);
+      }
+
+      tick(deltaTime) {
+        const throughputInfo = this.config.getEffectiveThroughput();
+        let allComplete = true;
+
+        this.streams.forEach((stream, i) => {
+          if (stream.state === 'complete') return;
+          allComplete = false;
+
+          const streamRecords = stream.range.size || this.config.get('tableSize');
+          const effectiveThroughput = throughputInfo.perStream[i] ?? throughputInfo.perStream[0] ?? 1000;
+
+          if (stream.state === 'idle') {
+            stream.state = 'active';
+          }
+
+          if (stream.state === 'active') {
+            const records = deltaTime * effectiveThroughput;
+            stream.progress += records / streamRecords;
+            stream.recordsProcessed = Math.min(streamRecords, Math.floor(stream.progress * streamRecords));
+            // Derive scan/transfer progress for visual compatibility
+            stream.scanProgress = Math.min(1, stream.progress * 1.2);  // scan leads slightly
+            stream.transferProgress = stream.progress;
+            if (stream.progress >= 1) {
+              stream.progress = 1;
+              stream.scanProgress = 1;
+              stream.transferProgress = 1;
+              stream.recordsProcessed = streamRecords;
+              stream.state = 'complete';
+            }
+          }
+        });
+
+        this.bus.emit('streams-updated', this.streams);
+        return allComplete;
+      }
+
+      reconfigure() {
+        const cfg = this.config.getAll();
+        const ranges = this.config.getStreamRanges();
+        const nodeAssignment = this.config.getNodeAssignment();
+        const totalProcessed = this.getTotalRecordsProcessed();
+        const overallProgress = cfg.tableSize > 0 ? Math.min(1, totalProcessed / cfg.tableSize) : 0;
+
+        this.streams = ranges.map((range, i) => {
+          const streamRecords = range.size || cfg.tableSize;
+          const streamProgress = Math.min(1, overallProgress);
+          return {
+            id: i,
+            state: streamProgress >= 1 ? 'complete' : (totalProcessed > 0 ? 'active' : 'idle'),
+            progress: streamProgress,
+            scanProgress: Math.min(1, streamProgress * 1.2),
+            transferProgress: streamProgress,
+            recordsProcessed: Math.min(streamRecords, Math.floor(streamProgress * streamRecords)),
+            range,
+            partitionsScanned: this.getPartitionsForStream(i, cfg),
+            nodeIndex: Math.max(0, nodeAssignment.findIndex(arr => arr.includes(i))),
+          };
+        });
+        this.bus.emit('streams-reset', this.streams);
+        this.bus.emit('streams-updated', this.streams);
+      }
+
+      getTotalRecordsProcessed() {
+        return this.streams.reduce((sum, c) => sum + c.recordsProcessed, 0);
+      }
+
+      getActiveStreamCount() {
+        return this.streams.filter(c => c.state === 'active').length;
+      }
+
+      getCompletedStreamCount() {
+        return this.streams.filter(c => c.state === 'complete').length;
+      }
+    }
+
+    // ── AnimationController ──────────────────────────────────────────────
+    class AnimationController {
+      constructor(bus, config, streamMgr, dbRenderer) {
+        this.bus = bus;
+        this.config = config;
+        this.streamMgr = streamMgr;
+        this.dbRenderer = dbRenderer;
+        this.running = false;
+        this.lastTime = null;
+        this.elapsedTime = 0;
+        this.animFrameId = null;
+
+        this.bus.on('animation-play', () => this.play());
+        this.bus.on('animation-pause', () => this.pause());
+        this.bus.on('animation-reset', () => this.reset());
+        this.bus.on('animation-step', () => this.step());
+        this.bus.on('config-changed', ({ key }) => {
+          // Theme and speed don't affect simulation state
+          if (['theme', 'animationSpeed', 'targetDistribution'].includes(key)) return;
+          // Live reconfigure: reset streams to reflect new config, keep flowing
+          this.streamMgr.reset();
+          this.elapsedTime = 0;
+          this.bus.emit('time-update', 0);
+        });
+      }
+
+      play() {
+        if (this.running) return;
+        this.running = true;
+        this.lastTime = performance.now();
+        this.loop();
+        this.bus.emit('animation-state', 'playing');
+      }
+
+      pause() {
+        this.running = false;
+        if (this.animFrameId) cancelAnimationFrame(this.animFrameId);
+        this.animFrameId = null;
+        this.bus.emit('animation-state', 'paused');
+      }
+
+      reset() {
+        this.pause();
+        this.elapsedTime = 0;
+        this.lastTime = null;
+        this.streamMgr.reset();
+        this.dbRenderer.resetHighlights();
+        this.dbRenderer.resetDrains();
+        this.dbRenderer.resetTargetFill();
+        this.dbRenderer.resetTargetViz();
+        this.dbRenderer.resetGauges();
+        this.dbRenderer.resetSyncNodes();
+        this.bus.emit('animation-state', 'idle');
+        this.bus.emit('time-update', 0);
+      }
+
+      step() {
+        const speed = this.config.get('animationSpeed');
+        this.elapsedTime += 0.5;
+        const allDone = this.streamMgr.tick(0.5);
+        this.updateVisuals();
+        this.bus.emit('time-update', this.elapsedTime);
+        if (allDone) {
+          this.bus.emit('animation-state', 'complete');
+        }
+      }
+
+      loop() {
+        if (!this.running) return;
+        const now = performance.now();
+        const rawDelta = (now - this.lastTime) / 1000;
+        this.lastTime = now;
+
+        const speed = this.config.get('animationSpeed');
+        const simDelta = rawDelta * speed;
+        this.elapsedTime += simDelta;
+
+        const allDone = this.streamMgr.tick(simDelta);
+        this.updateVisuals();
+        this.bus.emit('time-update', this.elapsedTime);
+
+        if (allDone) {
+          this.updateVisuals();
+          this.pause();
+          this.bus.emit('animation-state', 'complete');
+        }
+
+        this.animFrameId = requestAnimationFrame(() => this.loop());
+      }
+
+      updateVisuals() {
+        this.dbRenderer.resetHighlights();
+        const streams = this.streamMgr.streams;
+        const themeName = this.config.get('theme');
+        const cfg = this.config.getAll();
+        const throughputInfo = this.config.getEffectiveThroughput();
+
+        // Highlight active partitions
+        streams.forEach(stream => {
+          if (stream.state === 'active') {
+            this.dbRenderer.highlightPartitions(stream.partitionsScanned, true);
+          }
+        });
+
+        // Drain source partitions based on scan progress (pixel grid)
+        const partCount = cfg.partitionCount;
+        const partDrain = new Array(partCount).fill(0);
+        streams.forEach(stream => {
+          const drainProgress = stream.scanProgress;
+          stream.partitionsScanned.forEach(pi => {
+            partDrain[pi] = Math.max(partDrain[pi], drainProgress);
+          });
+        });
+        this.dbRenderer.updateSourceViz(partDrain, themeName);
+
+        // Fill target with colored pixels per stream
+        this.dbRenderer.updateTargetViz(streams, themeName);
+
+        // Update gauges - scale down as streams finish
+        const activeCount = streams.filter(c => c.state === 'active').length;
+        const activeFraction = cfg.streamCount > 0 ? activeCount / cfg.streamCount : 0;
+        this.dbRenderer.updateGauge('source', throughputInfo.sourceUtil * activeFraction);
+        this.dbRenderer.updateGauge('target', throughputInfo.targetUtil * activeFraction);
+
+        // Update sync node CPU fills
+        throughputInfo.perNodeUtil.forEach((util, i) => {
+          this.dbRenderer.updateSyncNodeCPU(i, util * activeFraction);
+        });
+
+        // Bottleneck visual indicators
+        if (activeCount > 0) {
+          this.dbRenderer.updateBottleneckIndicators(throughputInfo.bottlenecks);
+        } else {
+          this.dbRenderer.updateBottleneckIndicators([]);
+        }
+
+        // Draw connections
+        this.dbRenderer.drawConnections(streams, themeName);
+      }
+    }
+
+    class ParticleSystem {
+      constructor(bus, config, themes, dbRenderer) {
+        this.bus = bus;
+        this.config = config;
+        this.themes = themes;
+        this.dbRenderer = dbRenderer;
+        this.particles = [];
+        this.maxParticlesPerStream = 40;
+
+        this.bus.on('streams-updated', streams => this.update(streams));
+        this.bus.on('streams-reset', () => this.clear());
+        this.bus.on('animation-state', state => {
+          if (state === 'idle' || state === 'complete') this.clear();
+        });
+      }
+
+      update(streams) {
+        const layout = this.dbRenderer.getLayout();
+        const themeName = this.config.get('theme');
+        const colors = this.themes.themes[themeName]['--stream-colors'];
+        const layer = this.dbRenderer.particleLayer;
+        const streamCount = streams.length;
+        const nodeAssignment = this.config.getNodeAssignment();
+        const nodeCount = this.config.get('syncNodeCount');
+        const throughputInfo = this.config.getEffectiveThroughput();
+        const maxThroughput = Math.max(...throughputInfo.perStream, 1);
+        const nodeHeight = (layout.syncNodes.height - (nodeCount - 1) * 20) / nodeCount;
+        streams.forEach((stream, i) => {
+          if (stream.state !== 'active') {
+            this.particles = this.particles.filter(p => {
+              if (p.streamId === i) { if (p.el) p.el.remove(); return false; }
+              return true;
+            });
+            return;
+          }
+
+          const nodeIdx = nodeAssignment.findIndex(arr => arr.includes(i));
+          const nodeY = layout.syncNodes.y + Math.max(0, nodeIdx) * (nodeHeight + 20) + nodeHeight / 2;
+          const yStart = this.dbRenderer.getStreamSourceY(i, streamCount, layout.source);
+
+          const streamThroughput = throughputInfo.perStream[i] || 1;
+          const absoluteScale = Math.min(100, Math.max(0.5, 1 + 99 * (streamThroughput - 5000) / 95000));
+          const relativeScale = Math.max(0.3, streamThroughput / maxThroughput);
+          const particleScale = absoluteScale * relativeScale;
+          const maxForThisStream = Math.ceil((this.maxParticlesPerStream / 2) * particleScale);
+
+          // Stage 1 particles: Source -> Sync Node
+          const existing1 = this.particles.filter(p => p.streamId === i && p.stage === 1).length;
+          if (existing1 < maxForThisStream) {
+            const startX = layout.sourceGauges.x + layout.sourceGauges.width * 2 + 12;
+            const endX = layout.syncNodes.x;
+            this.particles.push({
+              streamId: i, stage: 1, t: Math.random() * 0.3,
+              baseSpeed: 0.012 + Math.random() * 0.008,
+              yOffset: (Math.random() - 0.5) * 8 * Math.sqrt(absoluteScale),
+              startX, startY: yStart, endX, endY: nodeY,
+              el: layer.append('circle')
+                .attr('class', 'particle')
+                .attr('r', 2 + Math.random() * 1.5)
+                .attr('fill', colors[i % 16]).attr('opacity', 0)
+            });
+          }
+
+          // Stage 2 particles: Sync Node -> Target
+          const existing2 = this.particles.filter(p => p.streamId === i && p.stage === 2).length;
+          if (existing2 < maxForThisStream) {
+            const startX2 = layout.syncNodes.x + layout.syncNodes.width;
+            const endX2 = layout.targetGauges.x - 4;
+            const endY2 = layout.target.y + layout.target.height / 2;
+            this.particles.push({
+              streamId: i, stage: 2, t: Math.random() * 0.3,
+              baseSpeed: 0.012 + Math.random() * 0.008,
+              yOffset: (Math.random() - 0.5) * 8 * Math.sqrt(absoluteScale),
+              startX: startX2, startY: nodeY, endX: endX2, endY: endY2,
+              el: layer.append('circle')
+                .attr('class', 'particle')
+                .attr('r', 2 + Math.random() * 1.5)
+                .attr('fill', colors[i % 16]).attr('opacity', 0)
+            });
+          }
+        });
+
+        // Move all particles — speed scales with animationSpeed
+        const speedScale = Math.max(1, Math.sqrt(Math.min(this.config.get('animationSpeed'), 20)));
+        this.particles = this.particles.filter(p => {
+          p.t += p.baseSpeed * speedScale;
+          if (p.t >= 1) { if (p.el) p.el.remove(); return false; }
+
+          const x = p.startX + (p.endX - p.startX) * p.t;
+          const y = p.startY + (p.endY - p.startY) * p.t;
+          const wave = Math.sin(p.t * Math.PI * 2) * (2 + speedScale * 2);
+          p.el.attr('cx', x).attr('cy', y + wave + p.yOffset);
+          p.el.attr('opacity', p.t < 0.1 ? p.t * 8 : p.t > 0.9 ? (1 - p.t) * 8 : 0.7);
+          return true;
+        });
+      }
+
+      clear() {
+        this.particles.forEach(p => { if (p.el) p.el.remove(); });
+        this.particles = [];
+      }
+    }
+
+    class MetricsDashboard {
+      constructor(bus, config, streamMgr) {
+        this.bus = bus;
+        this.config = config;
+        this.streamMgr = streamMgr;
+        this.container = document.getElementById('metrics-dashboard');
+        this.elapsedTime = 0;
+        this.render();
+        this.bus.on('streams-updated', () => this.update());
+        this.bus.on('time-update', t => { this.elapsedTime = t; this.update(); });
+        this.bus.on('animation-state', state => {
+          if (state === 'idle') { this.elapsedTime = 0; this.update(); }
+        });
+      }
+
+      render() {
+        this.container.innerHTML = `
+          <div class="metric-card">
+            <span class="metric-value" id="metric-time">00:00.0</span>
+            <span class="metric-label">Time Elapsed</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="metric-records">0 / 0</span>
+            <span class="metric-label">Records Processed</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="metric-throughput">0</span>
+            <span class="metric-label">Total Throughput (rec/s)</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="metric-active">0 / 0</span>
+            <span class="metric-label">Active ${Labels.stream}s</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="metric-speedup">1.0x</span>
+            <span class="metric-label">Speedup vs Default</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="metric-total-time">--</span>
+            <span class="metric-label">Est. Total Time</span>
+          </div>
+          <div class="metric-card" style="min-width: 260px;">
+            <span class="metric-value" id="metric-bottleneck" style="font-size:11px; white-space: nowrap;">--</span>
+            <span class="metric-label">Utilization</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="metric-eff-throughput">0</span>
+            <span class="metric-label">Effective Throughput</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="metric-per-node" style="font-size:13px;">--</span>
+            <span class="metric-label">Per-Node Throughput</span>
+          </div>
+        `;
+      }
+
+      update() {
+        const cfg = this.config.getAll();
+        const processed = this.streamMgr.getTotalRecordsProcessed();
+        const active = this.streamMgr.getActiveStreamCount();
+        const totalStreams = this.streamMgr.streams.length;
+        const throughputInfo = this.config.getEffectiveThroughput();
+        const activeFraction = totalStreams > 0 ? active / totalStreams : 0;
+        const currentThroughput = throughputInfo.total * activeFraction;
+
+        const mins = Math.floor(this.elapsedTime / 60);
+        const secs = (this.elapsedTime % 60).toFixed(1);
+        document.getElementById('metric-time').textContent =
+          `${String(mins).padStart(2, '0')}:${secs.padStart(4, '0')}`;
+
+        document.getElementById('metric-records').textContent =
+          `${formatNum(processed)} / ${formatNum(cfg.tableSize)}`;
+
+        document.getElementById('metric-throughput').textContent =
+          formatNum(currentThroughput);
+
+        document.getElementById('metric-active').textContent =
+          `${active} / ${totalStreams}`;
+
+        // Speedup: compare effective vs single-stream default
+        const defaultThroughput = Math.min(cfg.sourceACU * 2000, cfg.targetACU * 2000, cfg.throughputPerStream);
+        const speedup = throughputInfo.total / defaultThroughput;
+        document.getElementById('metric-speedup').textContent =
+          speedup.toFixed(1) + 'x';
+
+        // Est total time based on effective throughput
+        const estSeconds = cfg.tableSize / Math.max(1, throughputInfo.total);
+        document.getElementById('metric-total-time').textContent =
+          this._formatTime(estSeconds);
+
+        // Resource utilization breakdown
+        const parts = [];
+        const bottleneckColor = '#ef4444';
+        const normalColor = 'var(--accent-primary)';
+
+        const addPart = (label, util, isBottleneck) => {
+          const color = isBottleneck ? bottleneckColor : normalColor;
+          parts.push(`<span style="color:${color}">${label}: ${Math.round(util)}%</span>`);
+        };
+
+        if (active > 0) {
+          addPart('Src', throughputInfo.sourceUtil, throughputInfo.bottlenecks.includes('source'));
+          addPart('Sync', throughputInfo.syncUtil, throughputInfo.bottlenecks.includes('sync'));
+          addPart('Tgt', throughputInfo.targetUtil, throughputInfo.bottlenecks.includes('target'));
+          document.getElementById('metric-bottleneck').innerHTML = parts.join(' · ');
+        } else {
+          document.getElementById('metric-bottleneck').textContent = '--';
+        }
+
+        // Effective throughput
+        document.getElementById('metric-eff-throughput').textContent =
+          formatNum(throughputInfo.total) + '/s';
+
+        // Per-node throughput
+        const nodeAssignment = this.config.getNodeAssignment();
+        const perNodeStr = throughputInfo.perNodeUtil.map((util, i) => {
+          const nodeStreams = nodeAssignment[i] || [];
+          const nodeThroughput = nodeStreams.reduce((s, ci) => s + (throughputInfo.perStream[ci] || 0), 0);
+          return `${Labels.node[0]}${i + 1}: ${formatNum(nodeThroughput)}`;
+        }).join(' | ');
+        document.getElementById('metric-per-node').textContent = perNodeStr || '--';
+      }
+
+      _formatTime(seconds) {
+        if (seconds >= 86400) return (seconds / 86400).toFixed(1) + 'd';
+        if (seconds >= 3600) {
+          const h = Math.floor(seconds / 3600);
+          const m = Math.floor((seconds % 3600) / 60);
+          return `${h}h ${m}m`;
+        }
+        if (seconds >= 60) {
+          const m = Math.floor(seconds / 60);
+          const s = Math.floor(seconds % 60);
+          return `${m}m ${s}s`;
+        }
+        return seconds.toFixed(1) + 's';
+      }
+    }
+
+    class ThroughputChart {
+      constructor(bus, config, streamMgr) {
+        this.bus = bus;
+        this.config = config;
+        this.streamMgr = streamMgr;
+        this.data = [];
+        this.lastRenderTime = 0;
+        this.startWallTime = null;
+        this.margin = { top: 12, right: 20, bottom: 28, left: 55 };
+
+        const container = document.getElementById('throughput-chart');
+        this.svg = d3.select('#chart-svg');
+        this.chartG = this.svg.append('g')
+          .attr('transform', `translate(${this.margin.left},${this.margin.top})`);
+
+        this.gridG = this.chartG.append('g').attr('class', 'grid');
+        this.xAxisG = this.chartG.append('g').attr('class', 'axis x-axis');
+        this.yAxisG = this.chartG.append('g').attr('class', 'axis y-axis');
+        this.linePath = this.chartG.append('path').attr('class', 'chart-line');
+        this.chartG.append('text')
+          .attr('class', 'chart-label')
+          .attr('x', 4).attr('y', -2)
+          .text('Throughput (rec/s)');
+
+        this.bus.on('time-update', () => this.onTick());
+        this.bus.on('animation-state', (state) => {
+          if (state === 'idle') {
+            this.data = [];
+            this.startWallTime = null;
+            this.render();
+          }
+        });
+
+        window.addEventListener('resize', () => this.render());
+      }
+
+      onTick() {
+        const now = performance.now() / 1000;
+        if (!this.startWallTime) this.startWallTime = now;
+        const t = now - this.startWallTime;
+
+        const activeCount = this.streamMgr.getActiveStreamCount();
+        const totalStreams = this.config.get('streamCount');
+        const throughputInfo = this.config.getEffectiveThroughput();
+        const activeFraction = totalStreams > 0 ? activeCount / totalStreams : 0;
+        this.data.push({ time: t, value: throughputInfo.total * activeFraction });
+
+        // Throttle rendering to ~10fps
+        if (now * 1000 - this.lastRenderTime < 100) return;
+        this.lastRenderTime = now * 1000;
+        this.render();
+      }
+
+      render() {
+        if (this.data.length < 2) return;
+
+        const el = document.getElementById('throughput-chart');
+        const w = el.clientWidth - this.margin.left - this.margin.right;
+        const h = el.clientHeight - this.margin.top - this.margin.bottom;
+        if (w <= 0 || h <= 0) return;
+
+        const xScale = d3.scaleLinear()
+          .domain([0, d3.max(this.data, d => d.time) || 1])
+          .range([0, w]);
+
+        const yMax = d3.max(this.data, d => d.value) || 1;
+        const yScale = d3.scaleLinear()
+          .domain([0, yMax * 1.1])
+          .range([h, 0]);
+
+        // Grid
+        this.gridG.call(d3.axisLeft(yScale).ticks(4).tickSize(-w).tickFormat(''))
+          .attr('transform', `translate(0,0)`);
+
+        // Axes
+        this.xAxisG
+          .attr('transform', `translate(0,${h})`)
+          .call(d3.axisBottom(xScale).ticks(6).tickFormat(d => {
+            if (d >= 60) return Math.floor(d / 60) + 'm' + (d % 60 ? Math.floor(d % 60) + 's' : '');
+            return d.toFixed(0) + 's';
+          }));
+
+        this.yAxisG.call(d3.axisLeft(yScale).ticks(4).tickFormat(d => {
+          if (d >= 1000) return (d / 1000).toFixed(0) + 'K';
+          return d.toFixed(0);
+        }));
+
+        // Line
+        const line = d3.line()
+          .x(d => xScale(d.time))
+          .y(d => yScale(d.value));
+
+        this.linePath.attr('d', line(this.data));
+      }
+    }
+
+    // ── Initialization ───────────────────────────────────────────────────
+    const bus = new EventBus();
+    const config = new ConfigurationManager(bus);
+    const themes = new ThemeManager(bus);
+    themes.apply(config.get('theme'));
+    const panel = new ConfigPanel(bus, config);
+    const dbRenderer = new DatabaseRenderer(bus, config, themes);
+    const streamMgr = new StreamManager(bus, config);
+    const animController = new AnimationController(bus, config, streamMgr, dbRenderer);
+    const particleSys = new ParticleSystem(bus, config, themes, dbRenderer);
+    const dashboard = new MetricsDashboard(bus, config, streamMgr);
+    const throughputChart = new ThroughputChart(bus, config, streamMgr);
+
+    // Playback button state updates
+    bus.on('animation-state', state => {
+      document.getElementById('play-btn').classList.toggle('playing', state === 'playing');
+    });
+
+    // Initial connection draw
+    bus.on('streams-reset', streams => {
+      dbRenderer.drawConnections(streams, config.get('theme'));
+    });
+
+    // Draw initial state
+    dbRenderer.drawConnections(streamMgr.streams, config.get('theme'));
+
+    // Auto-play: start the constant flow immediately
+    bus.emit('animation-play');
+
+    window._app = { bus, config, themes, panel, dbRenderer, streamMgr, animController, particleSys, dashboard };
+  </script>
+</body>
+</html>
