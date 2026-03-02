@@ -2027,7 +2027,13 @@
         const totalStreams = this.config.get('streamCount');
         const throughputInfo = this.config.getEffectiveThroughput();
         const activeFraction = totalStreams > 0 ? activeCount / totalStreams : 0;
-        this.data.push({ time: t, value: throughputInfo.total * activeFraction });
+        const value = throughputInfo.total * activeFraction;
+
+        // Skip zero points after non-zero to avoid dips during config resets
+        const last = this.data[this.data.length - 1];
+        if (value === 0 && last && last.value > 0) return;
+
+        this.data.push({ time: t, value });
 
         // Throttle rendering to ~10fps
         if (now * 1000 - this.lastRenderTime < 100) return;

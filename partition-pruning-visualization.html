@@ -1396,10 +1396,16 @@
         const baseScanRate = this.config.get('baseScanRate');
         const throughputInfo = this.config.getEffectiveThroughput();
         const activeFraction = totalStreams > 0 ? activeCount / totalStreams : 0;
+        const throughput = activeCount * baseScanRate;
+
+        // Skip zero points after non-zero to avoid dips during config resets
+        const last = this.data[this.data.length - 1];
+        if (throughput === 0 && last && last.throughput > 0) return;
+
         this.data.push({
           time: t,
           utilization: throughputInfo.utilization * activeFraction,
-          throughput: activeCount * baseScanRate,
+          throughput,
         });
 
         // Throttle rendering to ~10fps
