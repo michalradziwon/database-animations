@@ -949,6 +949,7 @@
 
       updateSourceViz(partDrain, themeName) {
         const partCount = partDrain.length;
+        const streamCount = this.config.get('streamCount');
         const colors = this.themes.themes[themeName]['--stream-colors'];
 
         if (!this.sourceCellGrids) {
@@ -963,7 +964,14 @@
           const cellsToShow = grid.totalCells - cellsToRemove;
           const visible = grid.cells.slice(grid.cells.length - cellsToShow);
           visible.forEach(cell => {
-            allCells.push({ ...cell, color: colors[i % 8], grid });
+            // Partition pruning: each partition is scanned by exactly one stream,
+            // so all cells in a partition share that stream's color.
+            // FTS (single partition): all streams scan the full table concurrently,
+            // so cells are colored round-robin across streams to show interleaving.
+            const color = partCount > 1
+              ? colors[i % colors.length]
+              : colors[(cell.row * grid.cols + cell.col) % streamCount];
+            allCells.push({ ...cell, color, grid });
           });
         }
 
