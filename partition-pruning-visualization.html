@@ -126,9 +126,9 @@
         this.bus = bus;
         this._config = {
           tableSize: 100_000_000,
-          streamCount: 4,
+          streamCount: 1,
           partitionsEnabled: false,  // toggle: true = 4 partitions, false = none
-          partitionCount: 4,         // fixed at 4 when enabled
+          partitionCount: 1,         // always matches streamCount
           theme: 'professional',
           animationSpeed: 1,
           baseScanRate: 10_000,      // records/s base scan rate per stream
@@ -142,7 +142,10 @@
         if (this._config[key] === value) return;
         this._config[key] = value;
         if (key === 'partitionsEnabled') {
-          this._config.partitionCount = value ? 4 : 1;
+          this._config.partitionCount = value ? this._config.streamCount : 1;
+        }
+        if (key === 'streamCount' && this._config.partitionsEnabled) {
+          this._config.partitionCount = value;
         }
         this.bus.emit('config-changed', { key, value, config: { ...this._config } });
       }
@@ -229,30 +232,37 @@
         return partitionsScanned.reduce((sum, pi) => sum + (partRanges[pi].end - partRanges[pi].start), 0);
       }
 
-      // Utilization: what fraction of total DB IO is used
-      getUtilization() {
+      // Raw utilization (can exceed 100% when over DB capacity)
+      getRawUtilization() {
         const cfg = this._config;
+        const baselineStreams = 4; // 4 streams × FTS = 100% DB capacity
         const totalScanWork = Array.from({ length: cfg.streamCount }, (_, i) => this.getStreamScanSize(i))
           .reduce((s, v) => s + v, 0);
-        // Utilization = total scan work / table size (1.0 = reading entire table once)
-        // With pruning + alignment: each stream scans 1 partition = tableSize total
-        // Without pruning: each stream scans full table = streamCount * tableSize total
-        const util = Math.min(100, (totalScanWork / cfg.tableSize) * (100 / cfg.streamCount));
-        return util;
+        const baseUtil = (totalScanWork / (baselineStreams * cfg.tableSize)) * 100;
+        // Per-stream overhead: each additional concurrent stream adds ~3% DB load
+        // (connection overhead, metadata, coordination)
+        const overhead = cfg.partitionsEnabled ? (cfg.streamCount - 1) * 5 : 0;
+        return baseUtil + overhead;
+      }
+
+      getUtilization() {
+        return Math.min(100, this.getRawUtilization());
       }
 
       // Effective throughput per stream (records DELIVERED per second)
-      // Key insight: same throughput regardless of pruning.
-      // FTS achieves the same delivery rate but at higher DB utilization.
+      // When DB is maxed (utilization >= 100%), total throughput is capped
+      // and each stream's rate degrades proportionally.
       getEffectiveThroughput() {
         const cfg = this._config;
-        const perStream = [];
+        const rawUtilization = this.getRawUtilization();
+        const utilization = Math.min(100, rawUtilization);
 
-        for (let i = 0; i < cfg.streamCount; i++) {
-          perStream.push(cfg.baseScanRate);
-        }
+        // If over capacity, each stream gets a fraction of the base rate
+        const rate = rawUtilization > 100
+          ? cfg.baseScanRate * (100 / rawUtilization)
+          : cfg.baseScanRate;
 
-        const utilization = this.getUtilization();
+        const perStream = Array.from({ length: cfg.streamCount }, () => rate);
 
         return {
           perStream,
@@ -364,8 +374,8 @@
             <div class="config-separator"></div>
             <div class="config-group">
               <span class="config-label">Streams:</span>
-              <input type="range" class="config-slider" id="stream-slider" min="1" max="8" value="4">
-              <span class="slider-value" id="stream-value">4</span>
+              <input type="range" class="config-slider" id="stream-slider" min="1" max="8" value="1">
+              <span class="slider-value" id="stream-value">1</span>
             </div>
             <div class="config-separator"></div>
             <div class="config-group">
@@ -615,7 +625,7 @@
       }
 
       drawPartitions(layout, theme) {
-        const partCount = 4;
+        const partCount = this.config.get('partitionCount');
         const db = layout.sourceDB;
         const innerPad = 6;
         const partGap = 3;
@@ -719,7 +729,8 @@
         const db = layout.sourceDB;
         const innerPad = 6;
         const partGap = 3;
-        const totalH = db.height - innerPad * 2 - partGap * 3;
+        const partCount = this.config.get('partitionCount');
+        const totalH = db.height - innerPad * 2 - partGap * (partCount - 1);
         const fractions = this._getPartitionHeights();
 
         let y = db.y + innerPad;
@@ -735,7 +746,8 @@
         const db = layout.sourceDB;
         const innerPad = 6;
         const partGap = 3;
-        const totalH = db.height - innerPad * 2 - partGap * 3;
+        const partCount = this.config.get('partitionCount');
+        const totalH = db.height - innerPad * 2 - partGap * (partCount - 1);
         const fractions = this._getPartitionHeights();
 
         let top = db.y + innerPad;
@@ -1069,6 +1081,14 @@
           }
 
           if (stream.state === 'active') {
+            // Skip streams with no data to process
+            if (stream.range.size <= 0) {
+              stream.scanProgress = 1;
+              stream.recordsProcessed = 0;
+              stream.recordsDelivered = 0;
+              stream.state = 'complete';
+              return;
+            }
             const deliveryRate = throughputInfo.perStream[i] || 1000;
             const recordsDelivered = deltaTime * deliveryRate;
             stream.recordsDelivered += recordsDelivered;
@@ -1214,7 +1234,7 @@
         }
 
         // Drain source pixel grid based on scan progress
-        const partCount = cfg.partitionsEnabled ? 4 : 1;
+        const partCount = cfg.partitionsEnabled ? cfg.partitionCount : 1;
         const partDrain = new Array(partCount).fill(0);
         streams.forEach(stream => {
           stream.partitionsScanned.forEach(pi => {
@@ -1235,8 +1255,9 @@
         const utilization = activeCount > 0 ? throughputInfo.utilization * activeFraction : 0;
         this.dbRenderer.updateGauge('source', utilization);
 
-        // Update app gauge (simple: active streams / total streams * 80)
-        const appUtil = activeCount > 0 ? (activeCount / cfg.streamCount) * 80 : 0;
+        // Update target gauge: 10% per 10,000 rec/s of actual throughput
+        const currentThroughput = activeCount > 0 ? throughputInfo.total * activeFraction : 0;
+        const appUtil = Math.min(100, (currentThroughput / 10_000) * 10);
         this.dbRenderer.updateGauge('app', appUtil);
       }
     }
@@ -1393,10 +1414,9 @@
 
         const activeCount = this.streamMgr.getActiveStreamCount();
         const totalStreams = this.config.get('streamCount');
-        const baseScanRate = this.config.get('baseScanRate');
         const throughputInfo = this.config.getEffectiveThroughput();
         const activeFraction = totalStreams > 0 ? activeCount / totalStreams : 0;
-        const throughput = activeCount * baseScanRate;
+        const throughput = activeCount > 0 ? throughputInfo.total * activeFraction : 0;
 
         // Skip zero points after non-zero to avoid dips during config resets
         const last = this.data[this.data.length - 1];
@@ -1512,7 +1532,7 @@
         const throughputInfo = this.config.getEffectiveThroughput();
         const activeCount = this.streamMgr.getActiveStreamCount();
         const totalScanned = this.streamMgr.getTotalRecordsScanned();
-        const currentThroughput = activeCount * this.config.get('baseScanRate');
+        const currentThroughput = activeCount > 0 ? throughputInfo.total * (activeCount / this.config.get('streamCount')) : 0;
         const utilization = activeCount > 0
           ? throughputInfo.utilization * (activeCount / this.config.get('streamCount'))
           : 0;
